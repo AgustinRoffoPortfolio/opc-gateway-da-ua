@@ -4,6 +4,10 @@
     <ProjectReference Include="..\Gateway.Core\Gateway.Core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <PackageReference Include="TitaniumAS.Opc.Client.NetCore" Version="1.0.2.1" />
+  </ItemGroup>
+
   <PropertyGroup>
     <TargetFramework>net10.0-windows</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>

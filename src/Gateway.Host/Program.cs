@@ -6,11 +6,19 @@ using Microsoft.Extensions.Configuration;
 using Opc.Ua;
 using Opc.Ua.Configuration;
 using Serilog;
+using Gateway.Da;
 
 // El driver OPC DA exige un proceso de 32 bits: esto tiene que fallar
 // ruidosamente si algun dia alguien saca el PlatformTarget del csproj.
 Console.WriteLine($"ProcessArchitecture: {RuntimeInformation.ProcessArchitecture}");
 Console.WriteLine($"Is64BitProcess: {Environment.Is64BitProcess}");
+
+// Spike descartable de Fase 2: corta antes de levantar el servidor UA.
+if (args.Contains("--da-spike"))
+{
+    DaSpike.Run("Matrikon.OPC.Simulation.1");
+    return;
+}
 
 // Lee appsettings.json desde la carpeta de salida y lo mapea a UaOptions.
 var configuration = new ConfigurationBuilder()
