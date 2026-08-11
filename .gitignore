@@ -1,0 +1,48 @@
+# --- Compilación .NET ---
+bin/
+obj/
+[Dd]ebug/
+[Rr]elease/
+x86/
+x64/
+*.dll
+*.exe
+*.pdb
+
+# --- VS / VS Code / Rider ---
+.vs/
+*.user
+*.suo
+.idea/
+
+# --- NuGet ---
+packages/
+*.nupkg
+
+# --- Salida de ejecución ---
+logs/
+*.log
+
+# --- SECRETOS: nunca commitear ---
+# Certificados y claves del server UA
+pki/
+*.pfx
+*.p12
+*.pem
+*.key
+*.crt
+*.der
+
+# Configuración local con credenciales o rutas propias
+.env
+appsettings.Development.json
+appsettings.Local.json
+config/gateway.config.json
+
+# --- Datos reales: solo va tags.example.csv ---
+config/tags.csv
+config/tags.local.csv
+
+# --- Sistema ---
+Thumbs.db
+desktop.ini
