@@ -1,22 +1,30 @@
+using Gateway.Core;
 using Opc.Ua;
 using Opc.Ua.Server;
 
 namespace Gateway.Ua;
 
-/// Construye un arbol de tags de prueba y copia sus valores dummy a los nodos.
-/// La jerarquia sale de los puntos en el nombre del tag: cada segmento
-/// intermedio es una carpeta, el ultimo segmento es la variable.
+/// Construye el arbol de tags a partir de las TagDefinition leidas del CSV y
+/// copia sus valores dummy a los nodos. La jerarquia sale de los puntos en
+/// el nombre del tag: cada segmento intermedio es una carpeta, el ultimo
+/// segmento es la variable.
 public class GatewayNodeManager : CustomNodeManager2
 {
     // Cada cuantos ciclos de UpdateValues se simula un cambio de valor.
     private const int SimulationIntervalCycles = 5;
-    private const string SimulatedTagName = "PLANTA_01.MEDICION.PRESION_ENTRADA";
     private const double SimulationStep = 0.1;
 
-    // Tags hardcodeados hasta que exista un cargador de CSV real. El valor y su
-    // SourceTimestamp viajan siempre juntos: el timestamp solo se mueve cuando
-    // el valor efectivamente cambia (ver SimulateChanges), nunca en cada ciclo
-    // de publicacion.
+    // Definiciones en el orden del CSV: de ahi sale tanto el arbol como el
+    // tag elegido para la simulacion ("el primero numerico de la lista").
+    private readonly IReadOnlyList<TagDefinition> _tagDefinitions;
+
+    // Nombre del tag que SimulateChanges mueve, o null si el CSV no trae
+    // ningun tag numerico. Se resuelve una sola vez, al construir.
+    private readonly string? _simulatedTagName;
+
+    // El valor y su SourceTimestamp viajan siempre juntos: el timestamp solo
+    // se mueve cuando el valor efectivamente cambia (ver SimulateChanges),
+    // nunca en cada ciclo de publicacion.
     private readonly Dictionary<string, (object Value, DateTime SourceTimestamp)> _tags;
 
     // Cada nodo apareado con el nombre del tag que lo alimenta. Se arma una vez,
@@ -30,16 +38,19 @@ public class GatewayNodeManager : CustomNodeManager2
     private int _cycleCount;
 
     public GatewayNodeManager(IServerInternal server, ApplicationConfiguration configuration,
-        string namespaceUri)
+        string namespaceUri, IReadOnlyList<TagDefinition> tagDefinitions)
         : base(server, configuration, namespaceUri)
     {
+        _tagDefinitions = tagDefinitions;
+
         var startup = DateTime.UtcNow;
-        _tags = new Dictionary<string, (object Value, DateTime SourceTimestamp)>
-        {
-            ["PLANTA_01.MEDICION.PRESION_ENTRADA"] = (4.21, startup),
-            ["PLANTA_01.MEDICION.CAUDAL.TOTALIZADO"] = (128.5, startup),
-            ["PLANTA_01.ESTADO.BOMBA_01"] = (true, startup)
-        };
+        _tags = tagDefinitions.ToDictionary(
+            tag => tag.OpcUaName,
+            tag => (DefaultValue(tag.DataType), startup));
+
+        _simulatedTagName = tagDefinitions
+            .FirstOrDefault(tag => tag.DataType is TagDataType.Double or TagDataType.Int32)
+            ?.OpcUaName;
     }
 
     /// Cantidad de tags publicados. La usa el arranque para loguear.
@@ -60,9 +71,10 @@ public class GatewayNodeManager : CustomNodeManager2
             LinkToParent(externalReferences, ObjectIds.ObjectsFolder,
                 root.NodeId, ReferenceTypeIds.Organizes);
 
-            foreach (var (tagName, tag) in _tags)
+            foreach (var tag in _tagDefinitions)
             {
-                AddTag(root, tagName, tag.Value, tag.SourceTimestamp);
+                var (value, sourceTimestamp) = _tags[tag.OpcUaName];
+                AddTag(root, tag, value, sourceTimestamp);
             }
 
             AddPredefinedNode(SystemContext, root);
@@ -89,26 +101,33 @@ public class GatewayNodeManager : CustomNodeManager2
     }
 
     /// Unico punto que muta _tags. Cada SimulationIntervalCycles llamadas le
-    /// suma un paso fijo a SimulatedTagName y recien ahi mueve su
-    /// SourceTimestamp. Los otros dos tags no se tocan nunca: quedan clavados
-    /// en el timestamp de arranque a proposito, como contraste que demuestra
-    /// que UpdateValues no pisa el timestamp en cada publicacion.
+    /// suma un paso fijo a _simulatedTagName y recien ahi mueve su
+    /// SourceTimestamp. Los demas tags no se tocan nunca: quedan clavados en
+    /// el timestamp de arranque a proposito, como contraste que demuestra que
+    /// UpdateValues no pisa el timestamp en cada publicacion.
     private void SimulateChanges()
     {
         _cycleCount++;
         if (_cycleCount % SimulationIntervalCycles != 0) return;
+        if (_simulatedTagName is null) return;
 
-        var current = (double)_tags[SimulatedTagName].Value;
-        _tags[SimulatedTagName] = (current + SimulationStep, DateTime.UtcNow);
+        var (value, _) = _tags[_simulatedTagName];
+        var next = value switch
+        {
+            double d => (object)(d + SimulationStep),
+            int i => i + 1,
+            _ => value
+        };
+        _tags[_simulatedTagName] = (next, DateTime.UtcNow);
     }
 
     // ---------- Construccion del arbol ----------
 
     /// Agrega un tag al arbol, creando las carpetas intermedias que hagan
     /// falta segun los segmentos separados por punto en su nombre.
-    private void AddTag(NodeState root, string tagName, object value, DateTime sourceTimestamp)
+    private void AddTag(NodeState root, TagDefinition tag, object value, DateTime sourceTimestamp)
     {
-        var segments = tagName.Split('.');
+        var segments = tag.OpcUaName.Split('.');
         NodeState parent = root;
         var path = "";
 
@@ -118,9 +137,9 @@ public class GatewayNodeManager : CustomNodeManager2
             parent = GetOrAddFolder(parent, path, segments[i]);
         }
 
-        var variable = CreateVariable(parent, tagName, segments[^1], value, sourceTimestamp);
+        var variable = CreateVariable(parent, tag.OpcUaName, segments[^1], tag.DataType, value, sourceTimestamp);
         parent.AddChild(variable);
-        _bindings.Add((variable, tagName));
+        _bindings.Add((variable, tag.OpcUaName));
     }
 
     /// Devuelve la carpeta para esa ruta, creandola la primera vez que se pide.
@@ -143,14 +162,16 @@ public class GatewayNodeManager : CustomNodeManager2
 
     /// Variable simple, sin unidad de ingenieria ni rango: el CSV todavia no los trae.
     private BaseDataVariableState CreateVariable(NodeState parent, string tagName, string name,
-        object value, DateTime sourceTimestamp)
+        TagDataType dataType, object value, DateTime sourceTimestamp)
     {
-        var dataType = value switch
+        var uaDataType = dataType switch
         {
-            bool => DataTypeIds.Boolean,
-            double => DataTypeIds.Double,
+            TagDataType.Double => DataTypeIds.Double,
+            TagDataType.Boolean => DataTypeIds.Boolean,
+            TagDataType.Int32 => DataTypeIds.Int32,
+            TagDataType.String => DataTypeIds.String,
             _ => throw new InvalidOperationException(
-                $"Tipo de dato no soportado para '{tagName}': {value.GetType()}")
+                $"Tipo de dato no soportado para '{tagName}': {dataType}")
         };
 
         return new BaseDataVariableState(parent)
@@ -160,7 +181,7 @@ public class GatewayNodeManager : CustomNodeManager2
             DisplayName = name,
             TypeDefinitionId = VariableTypeIds.BaseDataVariableType,
             ReferenceTypeId = ReferenceTypeIds.HasComponent,
-            DataType = dataType,
+            DataType = uaDataType,
             ValueRank = ValueRanks.Scalar,
             AccessLevel = AccessLevels.CurrentRead,
             UserAccessLevel = AccessLevels.CurrentRead,
@@ -169,6 +190,16 @@ public class GatewayNodeManager : CustomNodeManager2
             Timestamp = sourceTimestamp
         };
     }
+
+    /// Valor dummy inicial, uno coherente por tipo de dato.
+    private static object DefaultValue(TagDataType dataType) => dataType switch
+    {
+        TagDataType.Double => 0.0,
+        TagDataType.Boolean => false,
+        TagDataType.Int32 => 0,
+        TagDataType.String => "",
+        _ => throw new InvalidOperationException($"Tipo de dato no soportado: {dataType}")
+    };
 
     /// Registra la referencia inversa desde un nodo que no es nuestro.
     private static void LinkToParent(IDictionary<NodeId, IList<IReference>> externalReferences,

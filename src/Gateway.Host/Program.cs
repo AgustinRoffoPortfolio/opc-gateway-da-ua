@@ -79,7 +79,11 @@ Log.Information("PKI en {PkiRoot} (auto-aceptar: {Auto})",
 // Crea el certificado propio del servidor la primera vez que corre.
 await application.CheckApplicationInstanceCertificatesAsync(silent: true);
 
-var server = new UaServer(options);
+// Arbol de tags: sale del CSV, no hardcodeado. Parser deliberadamente
+// ingenuo, cualquier fila mal formada tira excepcion y el gateway no arranca.
+var tagDefinitions = CsvTagLoader.Load(options.TagsCsvPath);
+
+var server = new UaServer(options, tagDefinitions);
 await application.StartAsync(server);
 
 Log.Information("Address space listo: {Tags} tags", server.NodeManager?.TagCount ?? 0);
