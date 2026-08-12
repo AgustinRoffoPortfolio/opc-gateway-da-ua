@@ -329,3 +329,61 @@ que nada avise. El `switch` falla ruidoso. El costo son quince líneas.
 
 Los casos por defecto caen siempre en el lado conservador (`Bad`, `NotLimited`):
 ante un valor desconocido, el gateway no puede afirmar que el dato está bien.
+
+### 13. Se lee con `Cache`, no con `Device`
+
+`OpcDaGroup.Read` acepta dos orígenes. `Device` fuerza una lectura contra el
+dispositivo; `Cache` devuelve lo que el servidor DA ya tiene en su propia cache,
+refrescada a su ritmo.
+
+Se eligió `Cache` porque es el único modo que escala: con `Device`, el tráfico al
+dispositivo crece con la cantidad de lecturas del gateway, y evitar exactamente
+eso es la razón de ser de la cache propia (ver decisión 7). Un gateway que le
+pega al equipo legado en cada ciclo traslada al dispositivo la carga que debería
+absorber él.
+
+El precio es latencia, acotada por el `UpdateRate` del grupo. Medido contra
+Matrikon con `UpdateRate` de 1000 ms: el timestamp que devuelve `Cache` llega
+~124 ms antes del instante de lectura, contra ~1 ms con `Device`. Frente al
+intervalo de publicación UA (1000 ms), es despreciable.
+
+Dos aclaraciones para no prometer de más:
+
+- Matrikon estampa toda la tanda con el mismo instante en ambos modos, así que
+  el timestamp por item que `Cache` podría dar en teoría acá no aparece. Otro
+  servidor DA podría comportarse distinto.
+- Una versión anterior de este archivo justificaba `Device` afirmando que
+  `Cache` desincronizaba valor y timestamp por varios minutos. Medido después,
+  es falso: el desfase se observaba idéntico en los dos modos, así que no era
+  atribuible al origen de lectura. Ver la anomalía registrada en *Estado de
+  verificación*.
+
+  ### Anomalía: `SourceTimestamp` atrasado ~7 minutos (no reproducible)
+
+Durante la verificación de la Fase 2, los valores llegaban correctos a UaExpert
+pero con un `SourceTimestamp` ~7 minutos anterior a la hora real. El desfase era
+constante entre lecturas sucesivas (2,047000 s de avance del reloj del servidor
+contra 2,046793 s de reloj real), lo que descarta drift y apunta a una base de
+tiempo capturada una vez y desfasada.
+
+Se instrumentó el borde del driver: para cada item se logueó el
+`DateTimeOffset` crudo del SDK, antes de cualquier conversión, junto al reloj de
+pared tomado en la misma línea. Los dos venían corridos por la misma cantidad,
+así que el gateway estaba transmitiendo fielmente lo que el servidor DA le daba.
+Eso descartó el driver, la conversión a UTC y el modo de lectura en una sola
+corrida, sin necesidad de identificar la causa.
+
+El desfase desapareció solo, sin reiniciar el servidor DA (mismo PID) ni cambiar
+el código. No se encontró la causa: se descartaron cambios de hora del sistema
+(sin eventos `Kernel-General` Id 1 en la ventana), suspensión y reinicio del
+simulador. Queda registrado como anomalía del entorno de simulación, no del
+gateway.
+
+Verificado después de la desaparición: valor idéntico al último decimal entre
+MatrikonOPC Explorer y UaExpert, `SourceTimestamp` idéntico al milisegundo, y
+`ServerTimestamp` 373 ms posterior — la separación entre hora de origen y hora
+de registro, que es el criterio de "listo" de la fase.
+
+Ninguna prueba unitaria podía detectar esto: el driver cumplía su contrato. Es
+un bug que solo aparece integrando contra un sistema real, y el instrumento que
+lo acorraló fue el log en el borde, no el test.
