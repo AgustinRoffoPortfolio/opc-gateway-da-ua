@@ -100,11 +100,13 @@ public sealed class OpcDaTagSource : IDisposable
     /// indexada por ItemID.
     /// </summary>
     /// <remarks>
-    /// Se lee con Cache y no con Device: Cache devuelve lo que el servidor ya
-    /// tiene refrescado a su propio ritmo, con el timestamp de cuando el
-    /// servidor refresco ESE item. Device fuerza una lectura al dispositivo y
-    /// devuelve el mismo instante para toda la tanda, que es justo el dato que
-    /// el gateway no debe inventar.
+    /// Se lee con Device y no con Cache. Cache parecia mejor en teoria (deberia
+    /// dar el timestamp de cuando el servidor refresco cada item), pero medido
+    /// contra Matrikon devuelve el valor actual acompanado del timestamp del
+    /// refresco anterior: el valor y su hora quedan desincronizados, con hasta
+    /// varios minutos de diferencia. Device fuerza la lectura al dispositivo y
+    /// estampa el instante real, aunque toda la tanda comparta ese instante.
+    /// Un timestamp por item pero falso es peor que uno compartido y verdadero.
     /// </remarks>
     public IReadOnlyDictionary<string, TagSample> ReadAll()
     {
@@ -115,7 +117,7 @@ public sealed class OpcDaTagSource : IDisposable
         var samples = new Dictionary<string, TagSample>();
         if (_group.Items.Count == 0) return samples;
 
-        var values = _group.Read(_group.Items, OpcDaDataSource.Cache);
+        var values = _group.Read(_group.Items, OpcDaDataSource.Device);
 
         foreach (var value in values)
         {
