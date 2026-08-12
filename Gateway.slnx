@@ -6,4 +6,7 @@
     <Project Path="src/Gateway.Ua/Gateway.Ua.csproj" />
     <Project Path="src/Gateway.Web/Gateway.Web.csproj" />
   </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Gateway.Tests/Gateway.Tests.csproj" />
+  </Folder>
 </Solution>

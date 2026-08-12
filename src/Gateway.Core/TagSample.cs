@@ -8,8 +8,11 @@ namespace Gateway.Core;
 /// Valor crudo. Va como object porque el CSV declara cuatro tipos distintos
 /// (Double, Boolean, Int32, String) y no hay un tipo comun mejor.
 /// </param>
-/// <param name="Quality">Calidad traducida al vocabulario del gateway.</param>
-/// <param name="SourceTimestamp">
+/// <param name="Quality">
+/// Calidad con los tres campos de OPC DA (master, substatus, limit).
+/// La traduccion a StatusCode UA se hace en Gateway.Ua, no aca: Gateway.Core
+/// no conoce el vocabulario de ninguno de los dos protocolos de salida.
+/// </param>/// <param name="SourceTimestamp">
 /// Momento de origen del dato, SIEMPRE en UTC. La normalizacion a UTC se hace
 /// en el borde de Gateway.Da; de aca para adentro se asume cumplida.
 /// Este valor no se pisa nunca con la hora de lectura.
