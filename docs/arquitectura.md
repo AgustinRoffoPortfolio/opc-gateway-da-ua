@@ -237,3 +237,95 @@ Abierto:
   llamada a `CoInitializeSecurity` que hace internamente. Las aplicaciones de
   consola de .NET son MTA por defecto, pero conviene verificarlo explícitamente
   antes de dar por bueno el primer arranque con COM.
+
+  ---
+
+## Decisiones de la Fase 2 — driver, cache y cableado
+
+> Bloque agregado al cerrar el driver DA y la cache. Pendiente de integrar con
+> las secciones de arriba; en particular, la decisión 1 ("la interfaz de la
+> fuente de datos se ensancha") quedó desactualizada — ver punto 7.
+
+### 7. El contrato se partió en dos, no se ensanchó
+
+La idea original era ensanchar `ITagValueSource` para que devolviera
+`(valor, StatusCode, SourceTimestamp)` en vez de solo un valor. Al implementarlo
+apareció que con una cache en el medio hay dos preguntas distintas, no una más
+grande: el driver DA responde *qué acabo de leer* (`TagSample`) y el node manager
+pregunta *cuál es el último estado conocido* (`TagState`). Son ritmos distintos y
+no tienen por qué compartir firma.
+
+Lo que se diseñó entonces fue el tipo de dato compartido, no una interfaz común.
+`TagSample` viaja del driver a la cache; `TagState` va de la cache al node
+manager. El segundo puede devolver un valor viejo, el primero nunca.
+
+### 8. El driver DA no tiene reloj propio
+
+`OpcDaTagSource` expone `Connect()`, `AddItems()`, `ReadAll()` y `Dispose()`, y
+nada más. El ciclo que llama a `ReadAll()` vive en el host.
+
+El desacople de ritmos es trabajo de la cache y del host; si además el driver
+tuviera su propio timer habría dos relojes y ninguno dueño. Un driver sin hilos
+adentro también es mucho más simple de razonar cuando haya que agregar
+reconexión (Fase 4).
+
+La contrapartida es que la restricción de apartment COM (MTA) se le escapa al
+driver y pasa al host. Se resuelve validando: `Connect()` verifica el apartment
+y falla con un mensaje legible si no es MTA.
+
+### 9. El hilo de adquisición DA es explícito y separado
+
+El ciclo DA corre en un `Thread` propio, creado con
+`SetApartmentState(ApartmentState.MTA)`, y no en el timer de publicación UA.
+
+Dos razones. Primera: hasta acá el MTA se obtenía de rebote, porque un `Main`
+async corre sobre el thread pool, que es MTA por defecto — funcionaba, pero por
+accidente. Segunda: una lectura DA lenta no tiene por qué frenar la publicación
+UA, y compartir hilo garantizaría lo contrario.
+
+### 10. Ante una lectura mala se conserva el último valor
+
+Cuando llega una muestra con calidad no utilizable, la cache mantiene el valor
+anterior **y su `SourceTimestamp` original**, y le pega la calidad nueva. No se
+descarta el valor ni se refresca su hora.
+
+El criterio viene de cómo se usa el dato aguas abajo: un operador que ve un campo
+vacío no puede distinguir un tag caído de un tag que nunca existió, mientras que
+un valor con indicación de calidad mala le dice cuánto valía la medición hasta
+hace un rato y que dejó de actualizarse. La propia especificación de OPC DA
+reserva un subestado para esto (`BadLastKnown`), lo que indica que conservar era
+el comportamiento asumido.
+
+Lo que nunca se hace es conservar el valor y refrescarle el timestamp: ahí
+desaparece toda evidencia de que está congelado.
+
+El caso apareció en la primera corrida real. Leyendo con `Cache`, el servidor DA
+devolvió los valores de la sesión anterior marcados `BadOutOfService`, con
+timestamps de doce minutos antes de que el gateway arrancara. Sin la guarda de
+`IsUsable`, esos números se habrían escalado y publicado con apariencia de dato
+fresco.
+
+### 11. Un item DA puede alimentar varios nodos UA
+
+La relación entre `TAG_NAME_OPC_DA` y `TAG_NAME_OPC_UA` es uno a muchos: el mismo
+punto del servidor legado puede exponerse más de una vez con transformaciones
+distintas — la misma presión en bar y en kg/cm², por ejemplo.
+
+Se descubrió porque la primera versión de la cache indexaba las definiciones por
+nombre DA en un diccionario y el gateway no arrancaba con un CSV que repetía un
+ItemID. La corrección fue agrupar: por cada nombre DA, la lista de definiciones
+que lo consumen.
+
+### 12. La traducción de calidad va con `switch` explícito
+
+Los enums de calidad del SDK (`OpcDaQualityMaster`, `OpcDaQualityStatus`,
+`OpcDaQualityLimit`) coinciden en nombre y valor numérico con los de
+`Gateway.Core`, así que un cast habría funcionado. Se usa `switch` de todas
+formas.
+
+Un cast sigue compilando si el SDK renumera un enum en una versión futura, y
+falla en silencio sobre el dato: el gateway publicaría calidades equivocadas sin
+que nada avise. El `switch` falla ruidoso. El costo son quince líneas.
+
+Los casos por defecto caen siempre en el lado conservador (`Bad`, `NotLimited`):
+ante un valor desconocido, el gateway no puede afirmar que el dato está bien.
