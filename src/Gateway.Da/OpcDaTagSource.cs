@@ -100,13 +100,21 @@ public sealed class OpcDaTagSource : IDisposable
     /// indexada por ItemID.
     /// </summary>
     /// <remarks>
-    /// Se lee con Device y no con Cache. Cache parecia mejor en teoria (deberia
-    /// dar el timestamp de cuando el servidor refresco cada item), pero medido
-    /// contra Matrikon devuelve el valor actual acompanado del timestamp del
-    /// refresco anterior: el valor y su hora quedan desincronizados, con hasta
-    /// varios minutos de diferencia. Device fuerza la lectura al dispositivo y
-    /// estampa el instante real, aunque toda la tanda comparta ese instante.
-    /// Un timestamp por item pero falso es peor que uno compartido y verdadero.
+    /// Se lee con Cache y no con Device: Cache devuelve lo que el servidor ya
+    /// tiene, sin generar trafico al dispositivo. Es la unica opcion que escala,
+    /// porque el costo de Device crece con la cantidad de clientes UA y eso es
+    /// justamente lo que la cache del gateway existe para evitar.
+    ///
+    /// El precio es latencia acotada por el UpdateRate del grupo: medido contra
+    /// Matrikon, el timestamp llega ~124 ms atras del instante de lectura, contra
+    /// ~1 ms con Device. Despreciable frente al intervalo de publicacion UA.
+    ///
+    /// Una version anterior usaba Device por sospecha de que Cache desincronizaba
+    /// valor y timestamp por varios minutos. Medido despues, es falso: el desfase
+    /// aparecia identico en los dos modos y no era atribuible al modo de lectura.
+    ///
+    /// Matrikon estampa toda la tanda con el mismo instante en ambos modos, asi
+    /// que no hay timestamp por item que ganar. Otro servidor DA podria diferir.
     /// </remarks>
     public IReadOnlyDictionary<string, TagSample> ReadAll()
     {
@@ -117,7 +125,7 @@ public sealed class OpcDaTagSource : IDisposable
         var samples = new Dictionary<string, TagSample>();
         if (_group.Items.Count == 0) return samples;
 
-        var values = _group.Read(_group.Items, OpcDaDataSource.Device);
+        var values = _group.Read(_group.Items, OpcDaDataSource.Cache);
 
         foreach (var value in values)
         {
