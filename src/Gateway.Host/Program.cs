@@ -17,6 +17,31 @@ Console.WriteLine($"Is64BitProcess: {Environment.Is64BitProcess}");
 if (args.Contains("--da-spike"))
 {
     DaSpike.Run("Matrikon.OPC.Simulation.1");
+
+    Console.WriteLine();
+    Console.WriteLine("--- StatusCodes UA candidatos ---");
+
+    // Se verifica contra el stack real: si alguno no existe, la tabla de
+    // mapeo se cae y conviene saberlo antes de escribirla.
+    // Va aca y no en DaSpike.cs porque Gateway.Da no debe ver tipos de UA.
+    string[] candidates =
+    {
+        "Good", "GoodLocalOverride", "Uncertain", "UncertainLastUsableValue",
+        "UncertainSensorNotAccurate", "UncertainEngineeringUnitsExceeded",
+        "UncertainSubNormal", "UncertainInitialValue", "Bad",
+        "BadConfigurationError", "BadNotConnected", "BadDeviceFailure",
+        "BadSensorFailure", "BadNoCommunication", "BadCommunicationError",
+        "BadOutOfService", "BadWaitingForInitialData", "BadWaitingForResponse"
+    };
+
+    foreach (var name in candidates)
+    {
+        var field = typeof(StatusCodes).GetField(name);
+        Console.WriteLine(field is null
+            ? $"  {name,-34} NO EXISTE"
+            : $"  {name,-34} 0x{(uint)field.GetValue(null)!:X8}");
+    }
+
     return;
 }
 

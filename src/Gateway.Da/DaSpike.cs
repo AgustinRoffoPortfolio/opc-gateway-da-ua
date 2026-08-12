@@ -72,5 +72,20 @@ public static class DaSpike
             Console.WriteLine($"  Quality:   {v.Quality}");
             Console.WriteLine($"  Timestamp: {v.Timestamp:O}");
         }
+
+        Console.WriteLine();
+        Console.WriteLine("--- Enum de calidad del SDK ---");
+
+        // Se enumera el tipo real en vez de copiar constantes de la spec:
+        // los codigos de la tabla de mapeo tienen que salir de aca.
+        foreach (var value in Enum.GetValues<OpcDaQualityMaster>())
+            Console.WriteLine($"Master   {value,-12} = {(int)value}");
+
+        Console.WriteLine();
+
+        foreach (var value in Enum.GetValues<OpcDaQualityStatus>())
+            Console.WriteLine($"Status   {value,-24} = {(int)value}");
+
+        
     }
 }

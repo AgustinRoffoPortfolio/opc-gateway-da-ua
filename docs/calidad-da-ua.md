@@ -1,8 +1,8 @@
 # Traducción de calidad: OPC DA → OPC UA
 
-> **Estado:** diseñado, no implementado. La tabla se implementa en la Fase 2,
-> junto con la lectura real del servidor DA. Los valores numéricos de los códigos
-> DA se verifican contra el SDK antes de darlos por buenos.
+> **Estado:** verificado contra el SDK y contra la especificación. Los códigos DA
+> salieron de enumerar los tipos reales de la librería cliente; los `StatusCode`
+> UA, de consultar el stack de la OPC Foundation. Ninguno se copió de memoria.
 
 ## Por qué hace falta traducir
 
@@ -15,18 +15,23 @@ parece válido y no lo es.
 
 ## Cómo es la calidad del lado DA
 
-No es un booleano ni un enum plano: es un campo de bits que combina tres cosas.
+No es un booleano ni un enum plano: son 16 bits que combinan cuatro cosas.
 
 ```
- bits 7-6 │ bits 5-2  │ bits 1-0
-  Quality │ Substatus │  Limit
+ bits 15-8 │ bits 7-6 │ bits 5-2  │ bits 1-0
+  Vendor   │  Quality │ Substatus │  Limit
 ```
 
-- **Quality** — el nivel general: `Bad`, `Uncertain` o `Good`.
+- **Quality** — el nivel general: `Bad` (0), `Uncertain` (64) o `Good` (192).
 - **Substatus** — la causa concreta dentro de ese nivel. No es lo mismo un `Bad`
   porque se cayó la comunicación que un `Bad` porque el instrumento está fuera de
   servicio: el primero se resuelve solo, el segundo requiere que alguien vaya.
 - **Limit** — si el valor está pegado a un límite (alto, bajo o constante).
+- **Vendor** — 8 bits libres para el fabricante del servidor DA.
+
+Los valores numéricos no son arbitrarios: `Good` vale 192 porque es `11` corrido
+seis lugares, y cada substatus incrementa de a 4 porque ocupa los bits 5-2. Por
+eso `BadCommFailure` vale 24 y no 6.
 
 La consecuencia práctica: aplanar la calidad DA a "sirve / no sirve" tira a la
 basura la información que hace útil un diagnóstico. Es la diferencia con Modbus,
@@ -34,10 +39,27 @@ donde la calidad efectivamente se reduce a si el dispositivo contestó.
 
 ## Cómo es del lado UA
 
-UA tiene `StatusCode`, un código de 32 bits con su propio catálogo de nombres
-(`Good`, `Uncertain`, `BadCommunicationError`, `BadOutOfService`, y muchos más).
-Cubre aproximadamente las mismas situaciones, pero los nombres no coinciden y la
-correspondencia no es uno a uno.
+UA tiene `StatusCode`, un código de 32 bits con su propio catálogo de nombres.
+Cubre aproximadamente las mismas situaciones, pero los nombres no coinciden.
+
+Lo que no es obvio a primera vista: la OPC Foundation **reservó un rango de
+`StatusCode` para espejar la calidad DA**. Los códigos `0x8089` a `0x808D` son
+consecutivos y corresponden, en orden, a los mismos substatus que DA numera del 4
+al 28. La traducción no es una interpretación nuestra: el estándar la previó
+porque sabía que todo el mundo iba a tener que migrar.
+
+## Fuente de la tabla
+
+La tabla **no es propia**. Es la Tabla A.3 de la especificación OPC UA Parte 8
+(Data Access), Anexo A, sección A.3.2.3 — que es **normativa**, no informativa.
+
+El Anexo A describe dos componentes. El que nos aplica es el *COM UA Wrapper*: un
+servidor OPC UA que envuelve un servidor OPC DA para que clientes UA accedan a sus
+datos. Es exactamente lo que hace este gateway, así que la dirección de la tabla
+es la correcta. (El otro, el *COM UA Proxy*, va al revés y su tabla A.7 no sirve
+acá.)
+
+Fuente: https://reference.opcfoundation.org/specs/OPC-10000-8/annex-a
 
 ## La tabla
 
@@ -45,32 +67,51 @@ Va en una **tabla explícita**, en un solo lugar, no repartida en condicionales 
 el código. Es la regla de negocio central del gateway y tiene que poder leerse de
 un vistazo, auditarse y modificarse sin tocar la lógica de adquisición.
 
-| Calidad OPC DA | StatusCode OPC UA | Comentario |
-|---|---|---|
-| `Good` | `Good` | Caso normal. |
-| `Uncertain` | `Uncertain` | El valor sirve, pero con reservas. |
-| `Bad` | `Bad` | Genérico, sin causa identificada. |
-| `Bad_NotConnected` | `BadCommunicationError` | El item no está conectado a una fuente de datos. |
-| `Bad_OutOfService` | `BadOutOfService` | El item está deshabilitado en el servidor DA. |
-| `Bad_LastKnownValue` | `UncertainLastUsableValue` | Ver abajo: es la única fila que cambia de nivel. |
+La columna "DA" usa los nombres del SDK cliente; la especificación usa los mismos
+conceptos con otra grafía (`LAST_USABLE`, `Uncertain_LastUsableValue`).
 
-Todo código DA que no esté en la tabla cae en `Bad` genérico. Mejor un
-conservador de más que un `Good` inventado.
+| Calidad DA (SDK) | Valor | StatusCode UA | Código UA |
+|---|---|---|---|
+| `Good` | 192 | `Good` | `0x00000000` |
+| `GoodLocalOverride` | 216 | `GoodLocalOverride` | `0x00960000` |
+| `Uncertain` | 64 | `Uncertain` | `0x40000000` |
+| `UncertainLastUsableValue` | 68 | `UncertainLastUsableValue` | `0x40900000` |
+| `UncertainSensorNotAccurate` | 80 | `UncertainSensorNotAccurate` | `0x40930000` |
+| `UncertainEngineeringUnitsExceeded` | 84 | `UncertainEngineeringUnitsExceeded` | `0x40940000` |
+| `UncertainSubNormal` | 88 | `UncertainSubNormal` | `0x40950000` |
+| `Bad` | 0 | `Bad` | `0x80000000` |
+| `BadConfigurationError` | 4 | `BadConfigurationError` | `0x80890000` |
+| `BadNotConnected` | 8 | `BadNotConnected` | `0x808A0000` |
+| `BadDeviceFailure` | 12 | `BadDeviceFailure` | `0x808B0000` |
+| `BadSensorFailure` | 16 | `BadSensorFailure` | `0x808C0000` |
+| `BadLastKnown` | 20 | `BadOutOfService` | `0x808D0000` |
+| `BadCommFailure` | 24 | `BadNoCommunication` | `0x80310000` |
+| `BadOutOfService` | 28 | `BadOutOfService` | `0x808D0000` |
+| `BadWaitingForInitialData` | 32 | `BadWaitingForInitialData` | `0x80320000` |
 
-## La fila que cambia de nivel
+Todo código DA que no esté en la tabla cae en `Bad` genérico. Eso incluye el nivel
+maestro `Error` (128), que la especificación marca como reservado y no debería
+aparecer nunca. "No debería pasar" no es lo mismo que "no va a pasar".
 
-`Bad_LastKnownValue` es `Bad` en DA y se traduce a `Uncertain` en UA. Es la única
-traducción que no conserva el nivel, y es deliberada.
+## Las dos pérdidas de información
 
-El caso es este: el servidor DA perdió contacto con el dispositivo y está
-entregando el último valor que conoció. DA lo clasifica como `Bad` porque no es
-una lectura fresca. UA tiene un código más preciso —`UncertainLastUsableValue`—
-que dice exactamente eso: el dato es viejo pero utilizable.
+La traducción no es reversible, y conviene saber exactamente dónde se pierde.
 
-Traducirlo a `Bad` a secas sería técnicamente fiel y prácticamente peor: el
-cliente perdería la distinción entre "hay un valor viejo acá" y "no hay nada".
-Cuando el estándar de destino puede expresar algo con más precisión que el de
-origen, se usa la precisión.
+**1. `BadLastKnown` y `BadOutOfService` caen los dos en `BadOutOfService`.** Son
+situaciones distintas en DA —"perdí contacto y te doy el último valor que supe" vs
+"el item está deshabilitado"— y en UA quedan indistinguibles. Que la pérdida es
+deliberada del estándar se confirma mirando la tabla inversa (A.7), que tiene una
+fila menos y omite `LAST_KNOWN` por completo.
+
+Nota de diseño: la intuición dice que `BadLastKnown` debería subir a
+`UncertainLastUsableValue`, porque el dato existe aunque sea viejo y UA tiene un
+código que dice exactamente eso. **La especificación decidió lo contrario** y
+mantiene la severidad en `Bad`. Se sigue lo normativo: un cliente que filtre por
+severidad tiene que ver lo mismo acá que en cualquier otro gateway conforme.
+
+**2. Los 8 bits de fabricante se descartan.** La especificación lo indica
+explícitamente. Un servidor DA que use ese espacio para diagnóstico propio pierde
+esa información al pasar por el gateway.
 
 ## Qué pasa con la transformación de unidades
 
@@ -85,13 +126,22 @@ porque **parece válido**. Pasó por una fórmula, tiene la magnitud correcta y 
 unidades correctas. Nada en el número delata que la lectura de la que salió no
 servía.
 
+## Timestamps
+
+La especificación (A.3.2.4) confirma la decisión que ya estaba tomada: el
+timestamp que entrega el servidor DA se asigna al **SourceTimestamp**, y el
+**ServerTimestamp** lo pone el gateway con la hora del momento de la lectura.
+
+Detalle de implementación verificado en el spike: el SDK devuelve los timestamps
+en **hora local con offset**, no en UTC. La conversión a UTC se hace en el borde
+de `Gateway.Da`; de ahí para adentro se asume cumplida. Dejarlo pasar sin
+normalizar produciría saltos de una hora dos veces al año, imposibles de rastrear
+meses después en un historiador.
+
 ## Fuera de alcance de la PoC
 
-- **Los bits de límite.** UA también sabe expresar que un valor está en su límite
-  alto o bajo, así que la traducción es posible. Queda afuera porque no aporta a
-  lo que la PoC quiere demostrar, no porque no se pueda.
-- **Los subcódigos de `Uncertain`** (sensor impreciso, fuera del rango de
-  ingeniería, sub-normal). Todos caen hoy en `Uncertain` genérico.
+- **Los bits de límite.** La especificación los mapea a los Limit Bits del
+  `StatusCode` UA, así que la traducción es directa. Queda afuera porque no aporta
+  a lo que la PoC quiere demostrar, no porque no se pueda.
 
-Ambas son extensiones de la tabla, no cambios de diseño: agregar filas, no
-reescribir la traducción.
+Es una extensión de la traducción, no un cambio de diseño.
