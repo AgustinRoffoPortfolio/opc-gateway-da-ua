@@ -33,7 +33,10 @@ public readonly record struct TagState(
 public sealed class TagCache
 {
     // Indexado por nombre DA porque es la clave con la que llegan las muestras.
-    private readonly Dictionary<string, TagDefinition> _definitionsByDaName;
+    // Es una lista y no una definicion sola: un mismo item DA puede alimentar
+    // varios nodos UA con transformaciones distintas (el mismo caudal en m3/h
+    // y en l/s, por ejemplo). La relacion es uno a muchos.
+    private readonly Dictionary<string, List<TagDefinition>> _definitionsByDaName;
 
     // ConcurrentDictionary porque el hilo que lee DA y el que publica UA son
     // distintos: uno escribe mientras el otro lee, sin lock explicito.
@@ -41,12 +44,14 @@ public sealed class TagCache
 
     public TagCache(IEnumerable<TagDefinition> definitions)
     {
-        _definitionsByDaName = definitions.ToDictionary(d => d.OpcDaName);
+        _definitionsByDaName = definitions
+            .GroupBy(d => d.OpcDaName)
+            .ToDictionary(g => g.Key, g => g.ToList());
 
         // Todo tag arranca declarado pero sin dato. Sin esto, un cliente UA que
         // conecta antes de la primera lectura recibiria "tag desconocido", que
         // es una causa distinta y mandaria a buscar el problema al lugar equivocado.
-        foreach (var definition in _definitionsByDaName.Values)
+        foreach (var definition in _definitionsByDaName.Values.SelectMany(list => list))
             _stateByUaName[definition.OpcUaName] =
                 new TagState(null, TagQuality.WaitingForInitialData, DateTime.UtcNow);
     }
@@ -75,11 +80,14 @@ public sealed class TagCache
     {
         foreach (var (daName, sample) in samples)
         {
-            if (!_definitionsByDaName.TryGetValue(daName, out var definition))
+            if (!_definitionsByDaName.TryGetValue(daName, out var definitions))
                 continue;   // el servidor DA mando algo que no pedimos
 
-            _stateByUaName[definition.OpcUaName] =
-                Apply(definition, sample, _stateByUaName.GetValueOrDefault(definition.OpcUaName));
+            // Una muestra puede alimentar varios nodos UA, cada uno con su
+            // propia transformacion.
+            foreach (var definition in definitions)
+                _stateByUaName[definition.OpcUaName] =
+                    Apply(definition, sample, _stateByUaName.GetValueOrDefault(definition.OpcUaName));
         }
     }
 

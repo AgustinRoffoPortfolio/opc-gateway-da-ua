@@ -121,4 +121,19 @@ public class TagCacheTests
 
         Assert.Equal(1, cache.Count);
     }
+
+    [Fact]
+    public void UnItemDaPuedeAlimentarVariosNodosUa()
+    {
+        // Mismo tag DA expuesto dos veces con transformaciones distintas: es el
+        // caso de la misma medicion en dos unidades de ingenieria.
+        var enBar = new TagDefinition("PLANTA_01.PRESION_BAR", "Random.Real8", TagDataType.Double, 1.0, 0.0);
+        var enKgCm2 = new TagDefinition("PLANTA_01.PRESION_KGCM2", "Random.Real8", TagDataType.Double, 1.02, 0.0);
+
+        var cache = new TagCache([enBar, enKgCm2]);
+        cache.Update(Sample(100.0, TagQuality.Good, T1));
+
+        Assert.Equal(100.0, cache.Get("PLANTA_01.PRESION_BAR").ScaledValue);
+        Assert.Equal(102.0, (double)cache.Get("PLANTA_01.PRESION_KGCM2").ScaledValue!, 2);
+    }
 }

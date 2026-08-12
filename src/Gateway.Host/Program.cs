@@ -13,8 +13,8 @@ using Gateway.Da;
 Console.WriteLine($"ProcessArchitecture: {RuntimeInformation.ProcessArchitecture}");
 Console.WriteLine($"Is64BitProcess: {Environment.Is64BitProcess}");
 
-// Prueba manual del driver DA: corta antes de levantar el servidor UA.
-if (args.Contains("--da-spike"))
+// Prueba manual del driver DA aislado: corta antes de levantar el servidor UA.
+if (args.Contains("--da-only"))
 {
     using var daSource = new OpcDaTagSource("Matrikon.OPC.Simulation.1");
     daSource.Connect();
@@ -49,6 +49,9 @@ var configuration = new ConfigurationBuilder()
 
 var options = configuration.GetSection("Ua").Get<UaOptions>()
     ?? throw new InvalidOperationException("Falta la seccion 'Ua' en appsettings.json");
+
+var daOptions = configuration.GetSection("Da").Get<DaOptions>()
+    ?? throw new InvalidOperationException("Falta la seccion 'Da' en appsettings.json");
 
 // Logger de toda la aplicacion.
 Log.Logger = new LoggerConfiguration()
@@ -111,8 +114,24 @@ await application.CheckApplicationInstanceCertificatesAsync(silent: true);
 // ingenuo, cualquier fila mal formada tira excepcion y el gateway no arranca.
 var tagDefinitions = CsvTagLoader.Load(options.TagsCsvPath);
 
-var server = new UaServer(options, tagDefinitions);
+// Frontera entre los dos mundos: el driver DA la llena, el node manager la lee.
+var cache = new TagCache(tagDefinitions);
+
+var server = new UaServer(options.NamespaceUri, tagDefinitions, cache);
 await application.StartAsync(server);
+
+// El ciclo DA corre en su propio hilo y no en el timer de publicacion: COM
+// exige MTA, y una lectura DA lenta no tiene por que frenar la publicacion UA.
+// El apartment se fija aca de forma explicita en vez de heredarlo del hilo que
+// nos toque, que es como venia funcionando de rebote.
+var daShutdown = new CancellationTokenSource();
+var daThread = new Thread(() => RunDaLoop(cache, daOptions, daShutdown.Token))
+{
+    IsBackground = true,
+    Name = "OPC DA polling"
+};
+daThread.SetApartmentState(ApartmentState.MTA);
+daThread.Start();
 
 Log.Information("Address space listo: {Tags} tags", server.NodeManager?.TagCount ?? 0);
 
@@ -151,6 +170,38 @@ AppDomain.CurrentDomain.ProcessExit += (_, _) => shutdownRequested.TrySetResult(
 await shutdownRequested.Task;
 
 Log.Information("Deteniendo servidor...");
+await daShutdown.CancelAsync();
+daThread.Join(TimeSpan.FromSeconds(5));
 await application.StopAsync();
 Log.Information("Servidor detenido.");
 await Log.CloseAndFlushAsync();
+
+/// Ciclo de adquisicion DA: lee y vuelca en la cache hasta que se pida el apagado.
+static void RunDaLoop(TagCache cache, DaOptions options, CancellationToken token)
+{
+    using var source = new OpcDaTagSource(options.ProgId);
+
+    try
+    {
+        source.Connect(updateRateMs: options.UpdateRateMs);
+
+        var rejected = source.AddItems(cache.DaNames);
+        foreach (var itemId in rejected)
+            Log.Warning("El servidor DA rechazo el item {ItemId}: queda fuera de servicio", itemId);
+
+        Log.Information("Driver DA conectado a {ProgId}, leyendo cada {Ms} ms",
+            options.ProgId, options.UpdateRateMs);
+
+        while (!token.IsCancellationRequested)
+        {
+            cache.Update(source.ReadAll());
+            token.WaitHandle.WaitOne(options.UpdateRateMs);
+        }
+    }
+    catch (Exception ex)
+    {
+        // Sin reconexion todavia: eso es Fase 4. Por ahora el gateway sigue
+        // sirviendo el ultimo estado conocido con su calidad, en vez de morirse.
+        Log.Error(ex, "El ciclo de adquisicion DA se detuvo");
+    }
+}

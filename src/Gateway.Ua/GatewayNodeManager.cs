@@ -10,22 +10,13 @@ namespace Gateway.Ua;
 /// segmento es la variable.
 public class GatewayNodeManager : CustomNodeManager2
 {
-    // Cada cuantos ciclos de UpdateValues se simula un cambio de valor.
-    private const int SimulationIntervalCycles = 5;
-    private const double SimulationStep = 0.1;
-
-    // Definiciones en el orden del CSV: de ahi sale tanto el arbol como el
-    // tag elegido para la simulacion ("el primero numerico de la lista").
+    // Definiciones en el orden del CSV: de ahi sale el arbol de nodos.
     private readonly IReadOnlyList<TagDefinition> _tagDefinitions;
 
-    // Nombre del tag que SimulateChanges mueve, o null si el CSV no trae
-    // ningun tag numerico. Se resuelve una sola vez, al construir.
-    private readonly string? _simulatedTagName;
-
-    // El valor y su SourceTimestamp viajan siempre juntos: el timestamp solo
-    // se mueve cuando el valor efectivamente cambia (ver SimulateChanges),
-    // nunca en cada ciclo de publicacion.
-    private readonly Dictionary<string, (object Value, DateTime SourceTimestamp)> _tags;
+    // Fuente de los valores publicados. El node manager no lee del servidor DA:
+    // pide el ultimo estado conocido a su ritmo, sin saber a que frecuencia se
+    // llena la cache del otro lado.
+    private readonly TagCache _cache;
 
     // Cada nodo apareado con el nombre del tag que lo alimenta. Se arma una vez,
     // al construir el arbol, para no resolver nombres en cada ciclo.
@@ -35,22 +26,12 @@ public class GatewayNodeManager : CustomNodeManager2
     // que comparten un tramo del nombre no dupliquen la carpeta intermedia.
     private readonly Dictionary<string, FolderState> _folders = new();
 
-    private int _cycleCount;
-
     public GatewayNodeManager(IServerInternal server, ApplicationConfiguration configuration,
-        string namespaceUri, IReadOnlyList<TagDefinition> tagDefinitions)
+        string namespaceUri, IReadOnlyList<TagDefinition> tagDefinitions, TagCache cache)
         : base(server, configuration, namespaceUri)
     {
         _tagDefinitions = tagDefinitions;
-
-        var startup = DateTime.UtcNow;
-        _tags = tagDefinitions.ToDictionary(
-            tag => tag.OpcUaName,
-            tag => (DefaultValue(tag.DataType), startup));
-
-        _simulatedTagName = tagDefinitions
-            .FirstOrDefault(tag => tag.DataType is TagDataType.Double or TagDataType.Int32)
-            ?.OpcUaName;
+        _cache = cache;
     }
 
     /// Cantidad de tags publicados. La usa el arranque para loguear.
@@ -71,33 +52,41 @@ public class GatewayNodeManager : CustomNodeManager2
             LinkToParent(externalReferences, ObjectIds.ObjectsFolder,
                 root.NodeId, ReferenceTypeIds.Organizes);
 
+            // Los nodos nacen con el estado que la cache ya tiene: antes de la
+            // primera lectura DA eso es "esperando dato inicial", no Good. Un
+            // cliente que conecta en ese hueco tiene que ver que todavia no hay
+            // dato, no un cero con calidad buena.
             foreach (var tag in _tagDefinitions)
-            {
-                var (value, sourceTimestamp) = _tags[tag.OpcUaName];
-                AddTag(root, tag, value, sourceTimestamp);
-            }
+                AddTag(root, tag, _cache.Get(tag.OpcUaName));
 
             AddPredefinedNode(SystemContext, root);
         }
     }
 
-    /// Copia los valores actuales de _tags a los nodos y avisa a los clientes
-    /// suscriptos. Se llama desde el timer del programa principal.
+    /// Copia a los nodos el ultimo estado conocido de cada tag y avisa a los
+    /// clientes suscriptos. Se llama desde el timer del programa principal.
     public void UpdateValues()
     {
         lock (Lock)
         {
-            SimulateChanges();
-
             foreach (var (node, tagName) in _bindings)
-            {
-                var (value, sourceTimestamp) = _tags[tagName];
-                node.Value = value;
-                node.StatusCode = StatusCodes.Good;
-                node.Timestamp = sourceTimestamp;
-                node.ClearChangeMasks(SystemContext, false);
-            }
+                Publish(node, _cache.Get(tagName));
         }
+    }
+
+    /// Vuelca un estado de la cache a un nodo UA.
+    private void Publish(BaseDataVariableState node, TagState state)
+    {
+        node.Value = state.ScaledValue;
+        node.StatusCode = QualityMapper.ToStatusCode(state.Quality);
+
+        // node.Timestamp es el SourceTimestamp: el momento en que el dato se
+        // origino en el servidor DA. El ServerTimestamp lo pone el stack UA al
+        // responder, y son cosas distintas. Pisar este con la hora de lectura
+        // corrompe el historico de cualquier cosa que este aguas abajo.
+        node.Timestamp = state.SourceTimestamp;
+
+        node.ClearChangeMasks(SystemContext, false);
     }
 
     /// Unico punto que muta _tags. Cada SimulationIntervalCycles llamadas le
@@ -105,27 +94,12 @@ public class GatewayNodeManager : CustomNodeManager2
     /// SourceTimestamp. Los demas tags no se tocan nunca: quedan clavados en
     /// el timestamp de arranque a proposito, como contraste que demuestra que
     /// UpdateValues no pisa el timestamp en cada publicacion.
-    private void SimulateChanges()
-    {
-        _cycleCount++;
-        if (_cycleCount % SimulationIntervalCycles != 0) return;
-        if (_simulatedTagName is null) return;
-
-        var (value, _) = _tags[_simulatedTagName];
-        var next = value switch
-        {
-            double d => (object)(d + SimulationStep),
-            int i => i + 1,
-            _ => value
-        };
-        _tags[_simulatedTagName] = (next, DateTime.UtcNow);
-    }
 
     // ---------- Construccion del arbol ----------
 
     /// Agrega un tag al arbol, creando las carpetas intermedias que hagan
     /// falta segun los segmentos separados por punto en su nombre.
-    private void AddTag(NodeState root, TagDefinition tag, object value, DateTime sourceTimestamp)
+    private void AddTag(NodeState root, TagDefinition tag, TagState state)
     {
         var segments = tag.OpcUaName.Split('.');
         NodeState parent = root;
@@ -137,7 +111,7 @@ public class GatewayNodeManager : CustomNodeManager2
             parent = GetOrAddFolder(parent, path, segments[i]);
         }
 
-        var variable = CreateVariable(parent, tag.OpcUaName, segments[^1], tag.DataType, value, sourceTimestamp);
+        var variable = CreateVariable(parent, tag.OpcUaName, segments[^1], tag.DataType, state);
         parent.AddChild(variable);
         _bindings.Add((variable, tag.OpcUaName));
     }
@@ -162,7 +136,7 @@ public class GatewayNodeManager : CustomNodeManager2
 
     /// Variable simple, sin unidad de ingenieria ni rango: el CSV todavia no los trae.
     private BaseDataVariableState CreateVariable(NodeState parent, string tagName, string name,
-        TagDataType dataType, object value, DateTime sourceTimestamp)
+        TagDataType dataType, TagState state)
     {
         var uaDataType = dataType switch
         {
@@ -185,9 +159,9 @@ public class GatewayNodeManager : CustomNodeManager2
             ValueRank = ValueRanks.Scalar,
             AccessLevel = AccessLevels.CurrentRead,
             UserAccessLevel = AccessLevels.CurrentRead,
-            Value = value,
-            StatusCode = StatusCodes.Good,
-            Timestamp = sourceTimestamp
+            Value = state.ScaledValue,
+            StatusCode = QualityMapper.ToStatusCode(state.Quality),
+            Timestamp = state.SourceTimestamp
         };
     }
 

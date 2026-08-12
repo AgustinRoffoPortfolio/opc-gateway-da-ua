@@ -7,21 +7,26 @@ namespace Gateway.Ua;
 /// Servidor estandar del stack, mas nuestro NodeManager registrado.
 public class UaServer : StandardServer
 {
-    private readonly UaOptions _options;
+    private readonly string _namespaceUri;
     private readonly IReadOnlyList<TagDefinition> _tagDefinitions;
+    private readonly TagCache _cache;
 
     public GatewayNodeManager? NodeManager { get; private set; }
 
-    public UaServer(UaOptions options, IReadOnlyList<TagDefinition> tagDefinitions)
+    /// Recibe el namespace suelto y no UaOptions entera: es lo unico que usa,
+    /// y depender del objeto de configuracion completo ata esta clase a cada
+    /// campo que se le agregue despues.
+    public UaServer(string namespaceUri, IReadOnlyList<TagDefinition> tagDefinitions, TagCache cache)
     {
-        _options = options;
+        _namespaceUri = namespaceUri;
         _tagDefinitions = tagDefinitions;
+        _cache = cache;
     }
 
     protected override MasterNodeManager CreateMasterNodeManager(
         IServerInternal server, ApplicationConfiguration configuration)
     {
-        NodeManager = new GatewayNodeManager(server, configuration, _options.NamespaceUri, _tagDefinitions);
+        NodeManager = new GatewayNodeManager(server, configuration, _namespaceUri, _tagDefinitions, _cache);
         return new MasterNodeManager(server, configuration, null,
             new INodeManager[] { NodeManager });
     }
