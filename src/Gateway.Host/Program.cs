@@ -13,10 +13,30 @@ using Gateway.Da;
 Console.WriteLine($"ProcessArchitecture: {RuntimeInformation.ProcessArchitecture}");
 Console.WriteLine($"Is64BitProcess: {Environment.Is64BitProcess}");
 
-// Spike descartable de Fase 2: corta antes de levantar el servidor UA.
+// Prueba manual del driver DA: corta antes de levantar el servidor UA.
 if (args.Contains("--da-spike"))
 {
-    DaSpike.Run("Matrikon.OPC.Simulation.1");
+    using var daSource = new OpcDaTagSource("Matrikon.OPC.Simulation.1");
+    daSource.Connect();
+    Console.WriteLine($"IsConnected: {daSource.IsConnected}");
+
+    var rejected = daSource.AddItems(
+        ["Random.Real8", "Random.Int4", "Random.Boolean", "Random.String", "Tag.Que.No.Existe"]);
+    Console.WriteLine($"Rechazados: {string.Join(", ", rejected)}");
+
+    // Dos lecturas: la primera cae antes del primer refresco de la cache del
+    // servidor, la segunda ya trae datos buenos.
+    for (var pass = 1; pass <= 2; pass++)
+    {
+        Console.WriteLine($"--- Lectura {pass} ---");
+        foreach (var (itemId, sample) in daSource.ReadAll())
+            Console.WriteLine(
+                $"{itemId,-16} {sample.Value,-24} {sample.Quality.Master}/{sample.Quality.Substatus}" +
+                $" usable={sample.Quality.IsUsable} src={sample.SourceTimestamp:O}");
+
+        if (pass == 1) Thread.Sleep(2000);
+    }
+
     return;
 }
 
