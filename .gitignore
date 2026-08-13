@@ -19,9 +19,11 @@ x64/
 packages/
 *.nupkg
 
-# --- Salida de ejecución ---
+# --- Salida de ejecucion ---
 logs/
 *.log
+publish/
+*.zip
 
 # --- SECRETOS: nunca commitear ---
 # Certificados y claves del server UA
