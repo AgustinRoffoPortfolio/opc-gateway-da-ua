@@ -110,9 +110,17 @@ Log.Information("PKI en {PkiRoot} (auto-aceptar: {Auto})",
 // Crea el certificado propio del servidor la primera vez que corre.
 await application.CheckApplicationInstanceCertificatesAsync(silent: true);
 
-// Arbol de tags: sale del CSV, no hardcodeado. Parser deliberadamente
-// ingenuo, cualquier fila mal formada tira excepcion y el gateway no arranca.
-var tagDefinitions = CsvTagLoader.Load(options.TagsCsvPath);
+// Arbol de tags: sale del CSV, no hardcodeado. Carga parcial (Fase 3): una
+// fila invalida no tira el gateway abajo, queda fuera de servicio y se
+// reporta en el log.
+var tagLoadResult = TagValidator.LoadAndValidate(options.TagsCsvPath);
+foreach (var error in tagLoadResult.Errors)
+    Log.Warning("Tag invalido, queda fuera de servicio: {Error}", error.Message);
+
+Log.Information("Tags cargados: {Validos} validos, {Invalidos} con error",
+    tagLoadResult.Tags.Count, tagLoadResult.Errors.Count);
+
+var tagDefinitions = tagLoadResult.Tags;
 
 // Frontera entre los dos mundos: el driver DA la llena, el node manager la lee.
 var cache = new TagCache(tagDefinitions);

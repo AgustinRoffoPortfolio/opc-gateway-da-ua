@@ -10,11 +10,26 @@ public enum TagDataType
     String
 }
 
-/// Una fila del CSV de tags. Multiplier y Offset no se aplican todavia
-/// (Fase 2): por ahora solo viajan junto con el resto de la definicion.
+/// Nivel de acceso de un tag en el gateway. Acotado a mostrar u ocultar:
+/// el gateway es de solo lectura hasta Fase 8, asi que esto nunca habilita
+/// escritura, solo si el tag se publica o no como nodo UA.
+public enum TagAccessLevel
+{
+    Read,
+    Hidden
+}
+/// Una fila del CSV de tags. Los campos nuevos de la version extendida
+/// (Fase 3) tienen default para no romper las llamadas existentes que
+/// todavia construyen un TagDefinition solo con los cinco campos originales.
 public sealed record TagDefinition(
     string OpcUaName,
     string OpcDaName,
     TagDataType DataType,
     double Multiplier,
-    double Offset);
+    double Offset,
+    string EngineeringUnit = "",
+    int ScanRateMs = 0,
+    double Deadband = 0,
+    TagAccessLevel AccessLevel = TagAccessLevel.Read,
+    string Description = "",
+    bool Enabled = true);

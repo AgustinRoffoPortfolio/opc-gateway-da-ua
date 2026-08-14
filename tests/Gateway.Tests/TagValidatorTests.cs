@@ -1,0 +1,102 @@
+using Gateway.Core;
+
+namespace Gateway.Tests;
+
+public class TagValidatorTests
+{
+    private const string Header =
+        "TAG_NAME_OPC_UA;TAG_NAME_OPC_DA;DATA_TYPE;MULTIPLICADOR;OFFSET;EU;SCAN_RATE_MS;DEADBAND;ACCESS_LEVEL;DESCRIPTION;ENABLED";
+
+    // Escribe el contenido a un archivo temporal, corre carga y validacion,
+    // y borra el archivo despues. La ruta que da Path.GetTempFileName() ya
+    // es absoluta, asi que ConfigPathResolver la devuelve tal cual.
+    private static TagLoadResult CargarDesdeContenido(string csvContent)
+    {
+        var path = Path.GetTempFileName();
+        try
+        {
+            File.WriteAllText(path, csvContent);
+            return TagValidator.LoadAndValidate(path);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void CsvValido_CargaTodosLosTagsSinErrores()
+    {
+        var csv = string.Join('\n', Header,
+            "PLANTA_01.TAG_A;Random.Real8;Double;1;0;bar;1000;0.1;Read;Tag A;True",
+            "PLANTA_01.TAG_B;Random.Real4;Double;2;0;bar;1000;0.1;Read;Tag B;True");
+
+        var result = CargarDesdeContenido(csv);
+
+        Assert.Equal(2, result.Tags.Count);
+        Assert.Empty(result.Errors);
+    }
+
+    [Fact]
+    public void ColumnaDeMenos_QuedaFueraDeServicioYElRestoCargaIgual()
+    {
+        var csv = string.Join('\n', Header,
+            "PLANTA_01.TAG_A;Random.Real8;Double;1;0;bar;1000;0.1;Read;Falta enabled",
+            "PLANTA_01.TAG_B;Random.Real4;Double;2;0;bar;1000;0.1;Read;Tag B;True");
+
+        var result = CargarDesdeContenido(csv);
+
+        Assert.Single(result.Tags);
+        Assert.Equal("PLANTA_01.TAG_B", result.Tags[0].OpcUaName);
+        Assert.Single(result.Errors);
+        Assert.Equal(2, result.Errors[0].LineNumber);
+    }
+
+    [Fact]
+    public void TipoDeDatoInvalido_QuedaFueraDeServicio()
+    {
+        var csv = string.Join('\n', Header,
+            "PLANTA_01.TAG_A;Random.Real8;Entero;1;0;bar;1000;0.1;Read;Tipo invalido;True",
+            "PLANTA_01.TAG_B;Random.Real4;Double;2;0;bar;1000;0.1;Read;Tag B;True");
+
+        var result = CargarDesdeContenido(csv);
+
+        Assert.Single(result.Tags);
+        Assert.Equal("PLANTA_01.TAG_B", result.Tags[0].OpcUaName);
+        Assert.Single(result.Errors);
+        Assert.Equal("PLANTA_01.TAG_A", result.Errors[0].OpcUaName);
+    }
+
+    [Fact]
+    public void NombreDuplicado_GanaLaPrimeraAparicion()
+    {
+        var csv = string.Join('\n', Header,
+            "PLANTA_01.TAG_A;Random.Real8;Double;1;0;bar;1000;0.1;Read;Primera aparicion;True",
+            "PLANTA_01.TAG_A;Random.Real4;Double;2;0;bar;1000;0.1;Read;Segunda aparicion;True");
+
+        var result = CargarDesdeContenido(csv);
+
+        Assert.Single(result.Tags);
+        Assert.Equal("Primera aparicion", result.Tags[0].Description);
+        Assert.Single(result.Errors);
+        Assert.Equal(3, result.Errors[0].LineNumber);
+    }
+
+    [Fact]
+    public void CsvConCincoErroresDistintos_ArrancaIgualYReportaLosCinco()
+    {
+        var csv = string.Join('\n', Header,
+            "PLANTA_01.TAG_OK1;Random.Real8;Double;1;0;bar;1000;0.1;Read;Tag valido 1;True",
+            "PLANTA_01.TAG_COLUMNA;Random.Real8;Double;1;0;bar;1000;0.1;Read;Falta enabled",
+            "PLANTA_01.TAG_TIPO;Random.Real8;Entero;1;0;bar;1000;0.1;Read;Tipo invalido;True",
+            "PLANTA_01.TAG_MULT;Random.Real8;Double;abc;0;bar;1000;0.1;Read;Multiplicador invalido;True",
+            "PLANTA_01.TAG_ACCESO;Random.Real8;Double;1;0;bar;1000;0.1;Write;Access level invalido;True",
+            "PLANTA_01.TAG_OK2;Random.Real8;Double;1;0;bar;1000;0.1;Read;Tag valido 2;True",
+            "PLANTA_01.TAG_OK2;Random.Real4;Double;1;0;bar;1000;0.1;Read;Tag valido 2 duplicado;True");
+
+        var result = CargarDesdeContenido(csv);
+
+        Assert.Equal(2, result.Tags.Count);
+        Assert.Equal(5, result.Errors.Count);
+    }
+}
