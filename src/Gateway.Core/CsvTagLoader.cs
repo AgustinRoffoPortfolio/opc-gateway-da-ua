@@ -41,13 +41,13 @@ internal static class CsvTagLoader
                 var tag = new TagDefinition(
                     OpcUaName: opcUaName,
                     OpcDaName: fields[1],
-                    DataType: Enum.Parse<TagDataType>(fields[2], ignoreCase: true),
+                    DataType: ParseEnum<TagDataType>(fields[2], "DATA_TYPE"),
                     Multiplier: ParseDouble(fields[3], "MULTIPLICADOR"),
                     Offset: ParseDouble(fields[4], "OFFSET"),
                     EngineeringUnit: fields[5],
                     ScanRateMs: int.Parse(fields[6], CultureInfo.InvariantCulture),
                     Deadband: ParseDouble(fields[7], "DEADBAND"),
-                    AccessLevel: Enum.Parse<TagAccessLevel>(fields[8], ignoreCase: true),
+                    AccessLevel: ParseEnum<TagAccessLevel>(fields[8], "ACCESS_LEVEL"),
                     Description: fields[9],
                     Enabled: bool.Parse(fields[10]));
                 parsedRows.Add(new ParsedTagRow(lineNumber, tag));
@@ -72,6 +72,21 @@ internal static class CsvTagLoader
         {
             throw new FormatException(
                 $"{columnName} '{field}' no es un decimal valido (se espera PUNTO como separador decimal, no coma).");
+        }
+
+        return value;
+    }
+
+    /// Parsea un enum y, si falla, lista los valores aceptados. El mensaje que
+    /// da Enum.Parse por defecto ("Requested value 'X' was not found") no dice
+    /// que se esperaba, con lo que el operador tiene que ir a leer el codigo
+    /// para corregir una fila del CSV.
+    private static TEnum ParseEnum<TEnum>(string field, string columnName) where TEnum : struct, Enum
+    {
+        if (!Enum.TryParse<TEnum>(field, ignoreCase: true, out var value) || !Enum.IsDefined(value))
+        {
+            throw new FormatException(
+                $"{columnName} '{field}' no es valido (valores aceptados: {string.Join(", ", Enum.GetNames<TEnum>())}).");
         }
 
         return value;

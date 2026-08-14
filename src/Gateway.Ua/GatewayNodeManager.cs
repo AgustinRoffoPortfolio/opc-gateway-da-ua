@@ -96,12 +96,6 @@ public class GatewayNodeManager : CustomNodeManager2
         node.ClearChangeMasks(SystemContext, false);
     }
 
-    /// Unico punto que muta _tags. Cada SimulationIntervalCycles llamadas le
-    /// suma un paso fijo a _simulatedTagName y recien ahi mueve su
-    /// SourceTimestamp. Los demas tags no se tocan nunca: quedan clavados en
-    /// el timestamp de arranque a proposito, como contraste que demuestra que
-    /// UpdateValues no pisa el timestamp en cada publicacion.
-
     // ---------- Construccion del arbol ----------
 
     /// Agrega un tag al arbol, creando las carpetas intermedias que hagan
@@ -141,7 +135,9 @@ public class GatewayNodeManager : CustomNodeManager2
         return folder;
     }
 
-    /// Variable simple, sin unidad de ingenieria ni rango: el CSV todavia no los trae.
+    /// Variable simple, sin EUInformation ni rango. El CSV ya trae EU desde la
+    /// Fase 3, pero todavia no se expone como propiedad del nodo: queda para
+    /// cuando haya un cliente que la consuma.
     private BaseDataVariableState CreateVariable(NodeState parent, string tagName, string name,
         TagDataType dataType, TagState state)
     {
@@ -171,16 +167,6 @@ public class GatewayNodeManager : CustomNodeManager2
             Timestamp = state.SourceTimestamp
         };
     }
-
-    /// Valor dummy inicial, uno coherente por tipo de dato.
-    private static object DefaultValue(TagDataType dataType) => dataType switch
-    {
-        TagDataType.Double => 0.0,
-        TagDataType.Boolean => false,
-        TagDataType.Int32 => 0,
-        TagDataType.String => "",
-        _ => throw new InvalidOperationException($"Tipo de dato no soportado: {dataType}")
-    };
 
     /// Registra la referencia inversa desde un nodo que no es nuestro.
     private static void LinkToParent(IDictionary<NodeId, IList<IReference>> externalReferences,
