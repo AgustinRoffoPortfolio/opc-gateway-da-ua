@@ -56,8 +56,15 @@ public class GatewayNodeManager : CustomNodeManager2
             // primera lectura DA eso es "esperando dato inicial", no Good. Un
             // cliente que conecta en ese hueco tiene que ver que todavia no hay
             // dato, no un cero con calidad buena.
+            // Los tags Hidden se saltean a proposito: el driver DA los sigue
+            // leyendo y la cache los mantiene al dia, pero no se crea el nodo
+            // UA, asi que ningun cliente los ve. Es distinto de ENABLED=False,
+            // que directamente no se lee del servidor DA.
             foreach (var tag in _tagDefinitions)
+            {
+                if (tag.AccessLevel == TagAccessLevel.Hidden) continue;
                 AddTag(root, tag, _cache.Get(tag.OpcUaName));
+            }
 
             AddPredefinedNode(SystemContext, root);
         }
