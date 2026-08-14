@@ -28,6 +28,24 @@ Verificado:
 
 Deuda: el video de demo está grabado pero sin editar.
 
+## Fase 3 — configuración robusta
+
+Verificado:
+
+- **La carga parcial funciona sobre el gateway real.** Se corrió contra un CSV
+  con cinco errores deliberados (columna faltante, `DATA_TYPE` inválido, coma
+  decimal en `MULTIPLICADOR`, `ACCESS_LEVEL` inválido, nombre duplicado) más tres
+  tags válidos: el gateway arrancó, reportó los cinco en consola y sirvió el
+  resto.
+- **`ACCESS_LEVEL = Hidden` excluye el nodo del address space.** Log reportando
+  10 tags válidos en cache y 9 en el árbol, y UaExpert mostrando 9. La carpeta
+  intermedia del tag oculto tampoco se crea, así que no quedan carpetas vacías.
+- **Un ItemID inexistente y un tag oculto se distinguen desde el cliente.** El
+  primero da nodo presente con StatusCode malo; el segundo, nodo ausente. Son
+  dos mecanismos separados y el árbol UA los refleja.
+
+Tests: 39/39.
+
 ## Pendientes abiertos
 
 - **La raíz del repositorio se resuelve con el archivo de solución como ancla**,
@@ -43,3 +61,21 @@ Deuda: el video de demo está grabado pero sin editar.
   llamada a `CoInitializeSecurity` que hace internamente. Las aplicaciones de
   consola de .NET son MTA por defecto, pero conviene verificarlo explícitamente
   antes de dar por bueno el primer arranque con COM.
+
+## Sobre el método
+
+Las dos fallas más caras del proyecto pasaron por la suite de tests sin
+inmutarse, y aparecieron corriendo el sistema completo contra algo real.
+
+La primera fue el `SourceTimestamp` atrasado siete minutos: el driver cumplía su
+contrato, así que ningún test unitario podía verlo (ver [operacion.md](operacion.md)).
+La segunda fue un `MULTIPLICADOR` de `1,5` que parseaba en silencio como 15,
+porque `CultureInfo.InvariantCulture` acepta la coma como separador de miles si
+no se pasa `NumberStyles.Float` explícito. Los 37 tests estaban en verde: el caso
+de multiplicador inválido usaba `abc`, que falla con y sin el bug. Salió al
+correr el gateway contra el CSV de errores deliberados.
+
+Las dos tienen la misma forma —el componente hace exactamente lo que promete y el
+sistema igual entrega datos corruptos— y el instrumento que las encontró fue el
+mismo: mirar la salida real en el borde entre dos sistemas. De ahí que el criterio
+de "listo" exija verificación con los propios ojos y no solo suite en verde.
