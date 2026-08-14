@@ -99,4 +99,37 @@ public class TagValidatorTests
         Assert.Equal(2, result.Tags.Count);
         Assert.Equal(5, result.Errors.Count);
     }
+
+    // Regresion: el default de double.Parse acepta separador de miles, con lo
+    // que "1,5" (un Excel en es-AR que piso el punto por coma) parseaba en
+    // silencio como 15 y el tag quedaba escalado 10 veces mal. Tiene que ser
+    // un error de carga, no un valor distinto.
+    [Fact]
+    public void MultiplicadorConComaDecimal_QuedaFueraDeServicio()
+    {
+        var csv = string.Join('\n', Header,
+            "PLANTA_01.TAG_A;Random.Real8;Double;1,5;0;bar;1000;0.1;Read;Coma decimal;True",
+            "PLANTA_01.TAG_B;Random.Real4;Double;2;0;bar;1000;0.1;Read;Tag B;True");
+
+        var result = CargarDesdeContenido(csv);
+
+        Assert.Single(result.Tags);
+        Assert.Equal("PLANTA_01.TAG_B", result.Tags[0].OpcUaName);
+        Assert.Single(result.Errors);
+        Assert.Equal("PLANTA_01.TAG_A", result.Errors[0].OpcUaName);
+    }
+
+    [Fact]
+    public void DecimalesConPunto_ParseanConCulturaInvariante()
+    {
+        var csv = string.Join('\n', Header,
+            "PLANTA_01.TAG_A;Random.Real8;Double;1.5;-14.7;bar;1000;0.25;Read;Decimales validos;True");
+
+        var result = CargarDesdeContenido(csv);
+
+        Assert.Empty(result.Errors);
+        Assert.Equal(1.5, result.Tags[0].Multiplier);
+        Assert.Equal(-14.7, result.Tags[0].Offset);
+        Assert.Equal(0.25, result.Tags[0].Deadband);
+    }
 }

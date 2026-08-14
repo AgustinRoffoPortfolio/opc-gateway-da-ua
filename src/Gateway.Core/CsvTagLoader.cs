@@ -42,11 +42,11 @@ internal static class CsvTagLoader
                     OpcUaName: opcUaName,
                     OpcDaName: fields[1],
                     DataType: Enum.Parse<TagDataType>(fields[2], ignoreCase: true),
-                    Multiplier: double.Parse(fields[3], CultureInfo.InvariantCulture),
-                    Offset: double.Parse(fields[4], CultureInfo.InvariantCulture),
+                    Multiplier: ParseDouble(fields[3], "MULTIPLICADOR"),
+                    Offset: ParseDouble(fields[4], "OFFSET"),
                     EngineeringUnit: fields[5],
                     ScanRateMs: int.Parse(fields[6], CultureInfo.InvariantCulture),
-                    Deadband: double.Parse(fields[7], CultureInfo.InvariantCulture),
+                    Deadband: ParseDouble(fields[7], "DEADBAND"),
                     AccessLevel: Enum.Parse<TagAccessLevel>(fields[8], ignoreCase: true),
                     Description: fields[9],
                     Enabled: bool.Parse(fields[10]));
@@ -60,5 +60,20 @@ internal static class CsvTagLoader
         }
 
         return new CsvParseResult(parsedRows, errors);
+    }
+
+    /// Parsea un decimal en cultura invariante SIN permitir separador de miles.
+    /// El default de double.Parse incluye NumberStyles.AllowThousands, con lo
+    /// que "1,5" (un Excel en es-AR que piso el punto por coma) se leia como
+    /// 15 en silencio: el tag cargaba bien y quedaba escalado 10 veces mal.
+    private static double ParseDouble(string field, string columnName)
+    {
+        if (!double.TryParse(field, NumberStyles.Float, CultureInfo.InvariantCulture, out var value))
+        {
+            throw new FormatException(
+                $"{columnName} '{field}' no es un decimal valido (se espera PUNTO como separador decimal, no coma).");
+        }
+
+        return value;
     }
 }
