@@ -146,8 +146,8 @@ ruta completa, no el segmento.
 ### 4. `BaseDataVariableState` antes que `AnalogItemState`
 
 El proyecto anterior usa `AnalogItemState`, que exige `EURange` y
-`EngineeringUnits`. El CSV en su versión PoC no trae ni unidad ni rango, y
-además no existe `AnalogItemState` para `String`.
+`EngineeringUnits`. El CSV trae `EU` desde la Fase 3, pero todavía no se expone
+como propiedad del nodo, y además no existe `AnalogItemState` para `String`.
 
 Se arranca con `BaseDataVariableState`, que acepta cualquier `DataType`, y se
 sube a `AnalogItemState` más adelante para los tags que declaren unidad de
@@ -186,7 +186,9 @@ Todo lo configurable vive fuera del código:
 
 - **`appsettings.json`** — endpoint, namespace, intervalo de publicación, ruta de
   la PKI y ruta del CSV de tags.
-- **`config/tags.csv`** — la definición de los tags.
+- **`config/tags.csv`** — la definición de los tags. El formato completo, la
+  política de carga parcial y las decisiones detrás de cada campo están en
+  [configuracion-tags.md](configuracion-tags.md).
 
 Al repositorio va únicamente `config/tags.example.csv`, con nombres de tags,
 dispositivos y servidores **inventados**. El archivo real queda fuera del control
