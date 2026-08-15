@@ -107,6 +107,13 @@ await application.Build(
 Log.Information("PKI en {PkiRoot} (auto-aceptar: {Auto})",
     pkiRoot, options.AutoAcceptUntrustedCertificates);
 
+// Habilita los nodos de diagnostico del server (ServerDiagnostics). Vienen
+// apagados por default en el stack: el address space los expone igual, pero
+// no se llenan y EnabledFlag no se deja escribir en runtime. Los necesitamos
+// para medir si la suscripcion descarta notificaciones.
+application.ApplicationConfiguration.ServerConfiguration.DiagnosticsEnabled = true;
+Log.Information("Diagnosticos del servidor UA habilitados");
+
 // Crea el certificado propio del servidor la primera vez que corre.
 await application.CheckApplicationInstanceCertificatesAsync(silent: true);
 
