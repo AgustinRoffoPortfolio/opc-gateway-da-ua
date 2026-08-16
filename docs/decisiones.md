@@ -221,5 +221,7 @@ Dos aclaraciones para no prometer de más:
 - Una versión anterior de este archivo justificaba `Device` afirmando que
   `Cache` desincronizaba valor y timestamp por varios minutos. Medido después,
   es falso: el desfase se observaba idéntico en los dos modos, así que no era
-  atribuible al origen de lectura. Ver la anomalía en
-  [operacion.md](operacion.md#sourcetimestamp-atrasado-7-minutos-fase-2).
+  atribuible al origen de lectura. La causa se confirmó en la Fase 3: es el
+  simulador, que no refresca timestamps sin un cliente DA que lo mantenga
+  despierto. Ver la anomalía en
+  [operacion.md](operacion.md#sourcetimestamp-atrasado-fase-2-confirmado-en-fase-3).
