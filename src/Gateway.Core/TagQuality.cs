@@ -61,6 +61,12 @@ public readonly record struct TagQuality(
     public static readonly TagQuality WaitingForInitialData =
         new(QualityMaster.Bad, QualitySubstatus.BadWaitingForInitialData, QualityLimit.NotLimited);
 
+    /// El servidor DA rechazo el ItemID al darlo de alta: existe en el CSV pero
+    /// no del otro lado. Es un error de configuracion, no de comunicacion, y se
+    /// distingue para que nadie salga a revisar la red por un tag mal escrito.
+    public static readonly TagQuality ItemRejected =
+        new(QualityMaster.Bad, QualitySubstatus.BadConfigurationError, QualityLimit.NotLimited);
+
     /// Se pidio un tag que la cache no conoce.
     public static readonly TagQuality UnknownTag =
         new(QualityMaster.Bad, QualitySubstatus.BadConfigurationError, QualityLimit.NotLimited);
@@ -68,6 +74,18 @@ public readonly record struct TagQuality(
     /// Llego un valor pero no convierte al DataType declarado en el CSV.
     public static readonly TagQuality ConversionError =
         new(QualityMaster.Bad, QualitySubstatus.BadConfigurationError, QualityLimit.NotLimited);
+
+    /// El vinculo con el servidor DA no esta disponible y este tag nunca tuvo
+    /// un valor bueno. Distinta de WaitingForInitialData: aquella dice "todavia
+    /// no leimos", esta dice "leimos y no hay nadie del otro lado".
+    public static readonly TagQuality NotConnected =
+        new(QualityMaster.Bad, QualitySubstatus.BadNotConnected, QualityLimit.NotLimited);
+
+    /// El valor que se esta devolviendo es el ultimo que se leyo bien, pero ya
+    /// no se esta refrescando. El dato todavia sirve para orientarse; no sirve
+    /// para decidir. Es exactamente lo que Uncertain significa en OPC.
+    public static readonly TagQuality LastUsableValue =
+        new(QualityMaster.Uncertain, QualitySubstatus.UncertainLastUsableValue, QualityLimit.NotLimited);
 
     /// <summary>El valor sirve para transformar (multiplicador y offset).</summary>
     public bool IsUsable =>

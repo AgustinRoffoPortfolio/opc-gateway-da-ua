@@ -13,7 +13,10 @@ public class TagCacheTests
         double offset = 0.0) =>
         new("PLANTA_01.MEDICION.PRESION_ENTRADA", "Random.Real8", type, multiplier, offset);
 
-    private static TagCache CacheWith(TagDefinition definition) => new([definition]);
+    // Ventana de antiguedad larga a proposito: estos tests miden transformacion
+    // y calidad, no degradacion por tiempo. La degradacion tiene sus propios tests.
+    private static TagCache CacheWith(TagDefinition definition) =>
+        new([definition], TimeSpan.FromHours(1));
 
     private static Dictionary<string, TagSample> Sample(object? value, TagQuality quality, DateTime timestamp) =>
         new() { ["Random.Real8"] = new TagSample(value, quality, timestamp) };
@@ -130,7 +133,7 @@ public class TagCacheTests
         var enBar = new TagDefinition("PLANTA_01.PRESION_BAR", "Random.Real8", TagDataType.Double, 1.0, 0.0);
         var enKgCm2 = new TagDefinition("PLANTA_01.PRESION_KGCM2", "Random.Real8", TagDataType.Double, 1.02, 0.0);
 
-        var cache = new TagCache([enBar, enKgCm2]);
+        var cache = new TagCache([enBar, enKgCm2], TimeSpan.FromHours(1));
         cache.Update(Sample(100.0, TagQuality.Good, T1));
 
         Assert.Equal(100.0, cache.Get("PLANTA_01.PRESION_BAR").ScaledValue);

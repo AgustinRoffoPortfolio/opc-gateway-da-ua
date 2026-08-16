@@ -130,7 +130,16 @@ Log.Information("Tags cargados: {Validos} validos, {Invalidos} con error",
 var tagDefinitions = tagLoadResult.Tags;
 
 // Frontera entre los dos mundos: el driver DA la llena, el node manager la lee.
-var cache = new TagCache(tagDefinitions);
+// La ventana de antiguedad se traduce aca de ciclos a tiempo: el criterio se
+// configura en ciclos porque lo que importa es cuantas lecturas nos perdimos,
+// pero Gateway.Core no conoce DaOptions y solo recibe una duracion.
+var staleAfter = TimeSpan.FromMilliseconds(
+    (long)daOptions.UpdateRateMs * daOptions.StaleAfterCycles);
+
+var cache = new TagCache(tagDefinitions, staleAfter);
+
+Log.Information("Degradacion por antiguedad: {Cycles} ciclos ({Ms} ms sin refresco)",
+    daOptions.StaleAfterCycles, staleAfter.TotalMilliseconds);
 
 var server = new UaServer(options.NamespaceUri, tagDefinitions, cache);
 await application.StartAsync(server);
@@ -203,6 +212,15 @@ static void RunDaLoop(TagCache cache, DaOptions options, CancellationToken token
         var rejected = source.AddItems(cache.DaNames);
         foreach (var itemId in rejected)
             Log.Warning("El servidor DA rechazo el item {ItemId}: queda fuera de servicio", itemId);
+
+        // El rechazo tiene que llegar a la cache y no morir en el log: sin esto
+        // el tag se queda sin muestras y la degradacion por antiguedad lo marca
+        // como problema de comunicacion, mandando a revisar la red por un
+        // ItemID mal escrito.
+        if (rejected.Count > 0)
+            cache.Update(rejected.ToDictionary(
+                itemId => itemId,
+                _ => TagSample.NoData(TagQuality.ItemRejected)));
 
         Log.Information("Driver DA conectado a {ProgId}, leyendo cada {Ms} ms",
             options.ProgId, options.UpdateRateMs);
