@@ -139,4 +139,126 @@ public class TagCacheTests
         Assert.Equal(100.0, cache.Get("PLANTA_01.PRESION_BAR").ScaledValue);
         Assert.Equal(102.0, (double)cache.Get("PLANTA_01.PRESION_KGCM2").ScaledValue!, 2);
     }
+
+    // --- Rechazos de items en el reenganche --------------------------------
+    // Un item rechazado entra a la cache como TagSample.NoData: sin valor y con
+    // timestamp fresco. La primera vez es una duda y no tiene que pisar lo que
+    // el tag ya sabia; confirmada en el reintento, si.
+
+    [Fact]
+    public void NotConnectedSobreTagConValor_NoPisaNiReiniciaLaAntiguedad()
+    {
+        // Rechazo transitorio en el reenganche: el tag no tiene que perder lo que
+        // ya sabia, y tiene que seguir envejeciendo hacia LastUsableValue.
+        var cache = CacheQueEnvejeceRapido(Def(multiplier: 2.0));
+        cache.Update(Sample(5.0, TagQuality.Good, T1));
+
+        cache.Update(new Dictionary<string, TagSample>
+        {
+            ["Random.Real8"] = TagSample.NoData(TagQuality.NotConnected)
+        });
+
+        EsperarAQueEnvejezca();
+
+        var state = cache.Get("PLANTA_01.MEDICION.PRESION_ENTRADA");
+        Assert.Equal(TagQuality.LastUsableValue, state.Quality);
+        Assert.Equal(10.0, state.ScaledValue);
+        Assert.Equal(T1, state.SourceTimestamp);
+    }
+
+    [Fact]
+    public void ItemRejectedSobreTagConValor_SiPisaLaCalidad()
+    {
+        // Rechazo confirmado en el reintento: ya no es una duda sino un error de
+        // configuracion, y se publica como tal aunque cueste el valor.
+        var cache = CacheWith(Def(multiplier: 2.0));
+        cache.Update(Sample(5.0, TagQuality.Good, T1));
+
+        cache.Update(new Dictionary<string, TagSample>
+        {
+            ["Random.Real8"] = TagSample.NoData(TagQuality.ItemRejected)
+        });
+
+        Assert.Equal(TagQuality.ItemRejected,
+            cache.Get("PLANTA_01.MEDICION.PRESION_ENTRADA").Quality);
+    }
+
+
+    // --- Degradacion por antiguedad ---------------------------------------
+    // La ventana es de milisegundos y se espera con Sleep porque Degrade lee el
+    // reloj por dentro. Es el precio de no tener el tiempo inyectado todavia.
+
+    private static TagCache CacheQueEnvejeceRapido(TagDefinition definition) =>
+        new([definition], TimeSpan.FromMilliseconds(30));
+
+    private static void EsperarAQueEnvejezca() => Thread.Sleep(120);
+
+    [Fact]
+    public void TagFresco_NoDegrada()
+    {
+        var cache = CacheQueEnvejeceRapido(Def(multiplier: 2.0));
+        cache.Update(Sample(5.0, TagQuality.Good, T1));
+
+        var state = cache.Get("PLANTA_01.MEDICION.PRESION_ENTRADA");
+        Assert.Equal(TagQuality.Good, state.Quality);
+    }
+
+    [Fact]
+    public void TagViejoConValorBueno_PasaALastUsableValue()
+    {
+        var cache = CacheQueEnvejeceRapido(Def(multiplier: 2.0));
+        cache.Update(Sample(5.0, TagQuality.Good, T1));
+
+        EsperarAQueEnvejezca();
+
+        var state = cache.Get("PLANTA_01.MEDICION.PRESION_ENTRADA");
+        Assert.Equal(TagQuality.LastUsableValue, state.Quality);
+        Assert.Equal(10.0, state.ScaledValue);      // el valor no se toca
+        Assert.Equal(T1, state.SourceTimestamp);    // el timestamp tampoco
+    }
+
+    [Fact]
+    public void TagViejoSinDato_PasaANotConnected()
+    {
+        var cache = CacheQueEnvejeceRapido(Def());
+
+        EsperarAQueEnvejezca();
+
+        Assert.Equal(TagQuality.NotConnected,
+            cache.Get("PLANTA_01.MEDICION.PRESION_ENTRADA").Quality);
+    }
+
+    [Fact]
+    public void TagViejoYaMalo_NoMejoraSuCalidad()
+    {
+        var cache = CacheQueEnvejeceRapido(Def(multiplier: 2.0));
+        cache.Update(Sample(5.0, TagQuality.Good, T1));
+
+        var bad = new TagQuality(QualityMaster.Bad, QualitySubstatus.BadDeviceFailure, QualityLimit.NotLimited);
+        cache.Update(Sample(999.0, bad, T2));
+
+        EsperarAQueEnvejezca();
+
+        // Degradar nunca mejora: la causa concreta se conserva, no pasa a Uncertain.
+        Assert.Equal(bad, cache.Get("PLANTA_01.MEDICION.PRESION_ENTRADA").Quality);
+    }
+
+    [Fact]
+    public void DegradacionNoPisaElEstadoGuardado()
+    {
+        // Se lee degradado, pero cuando el DA vuelve la muestra nueva se compara
+        // contra la ultima calidad real, no contra la degradacion inventada.
+        var cache = CacheQueEnvejeceRapido(Def(multiplier: 2.0));
+        cache.Update(Sample(5.0, TagQuality.Good, T1));
+
+        EsperarAQueEnvejezca();
+        Assert.Equal(TagQuality.LastUsableValue, cache.Get("PLANTA_01.MEDICION.PRESION_ENTRADA").Quality);
+
+        cache.Update(Sample(7.0, TagQuality.Good, T2));
+
+        var state = cache.Get("PLANTA_01.MEDICION.PRESION_ENTRADA");
+        Assert.Equal(TagQuality.Good, state.Quality);
+        Assert.Equal(14.0, state.ScaledValue);
+        Assert.Equal(T2, state.SourceTimestamp);
+    }
 }

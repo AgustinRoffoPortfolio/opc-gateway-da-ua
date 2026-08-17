@@ -166,6 +166,20 @@ public sealed class TagCache
     /// </remarks>
     private static TagState Apply(TagDefinition definition, TagSample sample, TagState previous, DateTime now)
     {
+        // NotConnected no es una respuesta del servidor DA: es la duda que el
+        // gateway publica cuando un alta se rechaza por primera vez, sin saber
+        // todavia si el ItemID no existe o si el servidor no termino de levantar.
+        // Pisar con esa duda un tag que ya tenia valor bueno lo deja peor que
+        // durante la caida: por especificacion un DataValue con StatusCode Bad
+        // no transporta valor, asi que el cliente pierde el ultimo dato conocido
+        // y su SourceTimestamp. Se devuelve el estado previo tal cual, sin
+        // refrescar LastUpdateUtc, para que la antiguedad lo siga degradando
+        // hasta LastUsableValue, que es Uncertain y si conserva el valor.
+        // Un rechazo confirmado en el reintento llega como ItemRejected y ese si
+        // pisa: ahi ya es un error de configuracion, no una duda.
+        if (sample.Quality == TagQuality.NotConnected && previous.ScaledValue is not null)
+            return previous;
+
         // Calidad no utilizable: se conserva el valor anterior con su timestamp
         // original, y se pega la calidad nueva. Escalar sobre una lectura mala
         // produce un numero con apariencia de valido, que es peor que no publicar.
