@@ -21,10 +21,30 @@ public sealed class OpcDaTagSource : IDisposable
     private OpcDaGroup? _group;
     private bool _disposed;
 
+    // Configuracion global de COM del proceso, no de esta instancia: va una sola
+    // vez y antes que cualquier otra llamada COM, o Windows contesta
+    // RPC_E_TOO_LATE. Con reconexion se crean varios OpcDaTagSource a lo largo
+    // de la vida del proceso, asi que no puede vivir en Connect().
+    private static readonly Lock BootstrapLock = new();
+    private static bool _bootstrapped;
+
+    private static void EnsureBootstrapped()
+    {
+        if (_bootstrapped) return;
+
+        lock (BootstrapLock)
+        {
+            if (_bootstrapped) return;
+            Bootstrap.Initialize();
+            _bootstrapped = true;
+        }
+    }
+
     public OpcDaTagSource(string progId)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(progId);
         _progId = progId;
+        EnsureBootstrapped();
     }
 
     /// <summary>El servidor DA respondio la ultima vez que se lo consulto.</summary>
@@ -47,10 +67,6 @@ public sealed class OpcDaTagSource : IDisposable
             throw new InvalidOperationException(
                 $"El hilo esta en {apartment} y COM exige MTA. Titanium falla con un error COM ilegible si no.");
 
-        // Configuracion global de COM del proceso. Va antes que cualquier otra
-        // llamada COM: si llega tarde, Windows contesta RPC_E_TOO_LATE.
-        Bootstrap.Initialize();
-
         // ProgID -> URL opcda://localhost/... resuelto por COM, no leyendo el registro.
         var url = UrlBuilder.Build(_progId);
 
@@ -70,13 +86,26 @@ public sealed class OpcDaTagSource : IDisposable
     /// Da de alta los items a leer. Devuelve los ItemIDs que el servidor rechazo,
     /// para que el llamador los marque fuera de servicio en vez de perderlos.
     /// </summary>
+    /// <remarks>
+    /// Se puede llamar varias veces sobre la misma sesion para reintentar altas
+    /// fallidas: los ItemIDs que ya estan dados de alta se ignoran. Sin ese
+    /// filtro, un reintento agregaria el mismo item dos veces al grupo y
+    /// ReadAll() lo leeria duplicado.
+    /// </remarks>
     public IReadOnlyList<string> AddItems(IEnumerable<string> itemIds)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         if (_group is null)
             throw new InvalidOperationException("Hay que llamar a Connect() antes de agregar items.");
 
-        var ids = itemIds.ToArray();
+        var alreadyAdded = _group.Items
+            .Select(item => item.ItemId)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var ids = itemIds
+            .Where(id => !alreadyAdded.Contains(id))
+            .ToArray();
+
         if (ids.Length == 0) return [];
 
         var definitions = ids

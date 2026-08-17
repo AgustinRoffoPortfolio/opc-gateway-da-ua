@@ -23,4 +23,13 @@ public class DaOptions
     /// Mas corto que esto solo agrega ruido al log: si el servidor DA esta
     /// caido, no vuelve en dos segundos.
     public int ReconnectDelayMs { get; set; } = 5000;
+
+    /// Cada cuanto se reintenta dar de alta los items que el servidor DA
+    /// rechazo. Un rechazo no siempre es definitivo: si el servidor acaba de
+    /// arrancar puede no tener su lista de items lista todavia, y en una planta
+    /// se agregan instrumentos con el gateway corriendo. Un ItemID mal escrito
+    /// se sigue rechazando siempre y termina igual fuera de servicio.
+    /// Treinta segundos: alcanza para resolver un arranque frio en el primer
+    /// reintento, y no machaca al servidor legado con altas fallidas.
+    public int ItemRetryIntervalMs { get; set; } = 30000;
 }
