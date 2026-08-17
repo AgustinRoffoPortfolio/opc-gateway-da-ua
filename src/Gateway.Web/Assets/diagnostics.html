@@ -32,6 +32,20 @@
   h2 { font-size:13px; text-transform:uppercase; letter-spacing:.04em;
        color:#666; margin:0 0 14px; font-weight:600; }
   .hidden { display:none; }
+  .controls { display:flex; align-items:center; gap:16px; margin-bottom:14px; }
+  .controls input[type=search] { flex:1; max-width:340px; padding:7px 10px;
+       border:1px solid var(--line); border-radius:4px; font-size:14px; }
+  .controls label { font-size:14px; color:#444; display:flex; align-items:center; gap:6px; }
+  table { width:100%; border-collapse:collapse; font-size:13.5px; }
+  th { text-align:left; font-size:12px; text-transform:uppercase; letter-spacing:.04em;
+       color:#666; font-weight:600; padding:0 10px 8px 0; border-bottom:1px solid var(--line); }
+  td { padding:7px 10px 7px 0; border-bottom:1px solid #f0f0f0;
+       font-variant-numeric:tabular-nums; white-space:nowrap; }
+  td.name { font-family:Consolas,monospace; white-space:normal; }
+  .q-Good { color:var(--ok); } .q-Uncertain { color:var(--warn); } .q-Bad { color:var(--bad); }
+  .sub { color:#777; font-size:12px; }
+  .foot { margin-top:12px; color:#666; font-size:13px; }
+</style>
 </style>
 </head>
 <body>
@@ -68,7 +82,20 @@
 </section>
 
 <section id="view-det" class="hidden">
-  <div class="card"><p class="hint">Pendiente: tabla de tags degradados.</p></div>
+  <div class="card">
+    <div class="controls">
+      <input type="search" id="search" placeholder="Filtrar por nombre UA o ItemID DA…">
+      <label><input type="checkbox" id="onlyDegraded" checked> Solo degradados</label>
+    </div>
+    <table>
+      <thead><tr>
+        <th>Tag UA</th><th>Item DA</th><th>Valor</th><th>Calidad</th>
+        <th>SourceTimestamp (DA)</th><th>Última lectura (gateway)</th><th>Antigüedad</th>
+      </tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+    <p class="foot" id="foot">—</p>
+  </div>
 </section>
 
 <script>
@@ -173,17 +200,76 @@ async function poll() {
   }
 }
 
+// Los nombres salen del CSV, que es configuracion de terceros: se escapan antes
+// de meterlos en el DOM. Un ItemID con un < no deberia poder inyectar markup.
+const esc = t => String(t).replace(/[&<>"]/g, c =>
+  ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" }[c]));
+
+const hhmmss = iso => new Date(iso).toLocaleTimeString("es-AR", { hour12: false });
+
+let detailVisible = false;
+
+// Los dos timestamps van lado a lado a proposito: es donde se ve que el gateway
+// no pisa la hora de origen. Si el de la izquierda queda atras del de la derecha,
+// el dato es viejo aunque la lectura sea reciente.
+async function pollTags() {
+  if (!detailVisible) return;   // con 8.000 tags, pagar esta consulta por segundo
+                                // para una tabla que nadie mira no tiene sentido.
+  const q = new URLSearchParams({
+    onlyDegraded: document.getElementById("onlyDegraded").checked,
+    search: document.getElementById("search").value,
+    limit: 100
+  });
+  try {
+    const res = await fetch("/api/diagnostics/tags?" + q);
+    if (!res.ok) { document.getElementById("foot").textContent = "Error " + res.status; return; }
+    const page = await res.json();
+
+    document.getElementById("rows").innerHTML = page.rows.map(r => `
+      <tr>
+        <td class="name">${esc(r.uaName)}</td>
+        <td class="name">${esc(r.daName ?? "—")}</td>
+        <td>${r.scaledValue === null ? "—" : esc(r.scaledValue)}</td>
+        <td class="q-${esc(r.qualityMaster)}">${esc(r.qualityMaster)}
+            <span class="sub">${esc(r.qualitySubstatus)}</span></td>
+        <td>${r.sourceTimestamp === null
+              ? '<span class="sub">nunca respondió</span>'
+              : hhmmss(r.sourceTimestamp)}</td>
+        <td>${hhmmss(r.lastUpdateUtc)}</td>
+        <td>${r.secondsSinceUpdate.toFixed(1)} s</td>
+      </tr>`).join("");
+
+    // Sin paginado: con 100 filas ya se ve el patron, y para encontrar un tag
+    // puntual el buscador es mas directo que recorrer paginas.
+    const shown = page.rows.length, total = page.totalMatching;
+    document.getElementById("foot").textContent = total === 0
+      ? "Ningún tag coincide con el filtro."
+      : shown < total
+        ? `Mostrando ${shown} de ${total} — refiná la búsqueda para ver el resto.`
+        : `${total} tag${total === 1 ? "" : "s"}.`;
+  } catch {
+    document.getElementById("foot").textContent = "Sin respuesta del gateway.";
+  }
+}
+
 document.getElementById("tab-op").onclick = () => showTab(true);
 document.getElementById("tab-det").onclick = () => showTab(false);
 function showTab(op) {
+  detailVisible = !op;
   document.getElementById("tab-op").classList.toggle("active", op);
   document.getElementById("tab-det").classList.toggle("active", !op);
   document.getElementById("view-op").classList.toggle("hidden", !op);
   document.getElementById("view-det").classList.toggle("hidden", op);
+  pollTags();   // sin esto, al entrar a Detalle la tabla queda vacia hasta un segundo.
 }
 
+// Los controles no disparan su propio fetch: cambian el parametro que usa el
+// proximo ciclo. Evita una peticion por tecla mientras se escribe.
+document.getElementById("onlyDegraded").onchange = pollTags;
+
 poll();
-setInterval(poll, 1000);
+pollTags();
+setInterval(() => { poll(); pollTags(); }, 1000);
 </script>
 </body>
 </html>
