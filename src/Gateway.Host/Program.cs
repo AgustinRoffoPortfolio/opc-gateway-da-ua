@@ -163,11 +163,25 @@ Log.Information("Address space listo: {Tags} tags", server.NodeManager?.TagCount
 
 // Cada ciclo: publicar los valores actuales a los nodos suscriptos.
 var interval = TimeSpan.FromMilliseconds(options.UpdateIntervalMs);
+// Instante de arranque para el uptime del diagnostico. Se toma aca, con todo
+// ya levantado: es el momento en que el gateway empieza a prestar servicio.
+var startedUtc = DateTime.UtcNow;
+
 using var timer = new Timer(_ =>
 {
     try
     {
         server.NodeManager?.UpdateValues();
+
+        // El snapshot se arma aca y no adentro del node manager porque es el
+        // unico punto que ve las dos mitades: el estado del vinculo DA lo tiene
+        // el servicio de adquisicion, y Gateway.Ua no puede depender del host.
+        if (server.NodeManager is { } nodeManager)
+            nodeManager.PublishDiagnostics(GatewaySnapshot.Build(
+                cache,
+                acquisition.GetStatus(),
+                nodeManager.GetServerStatus(),
+                startedUtc));
     }
     catch (Exception ex)
     {

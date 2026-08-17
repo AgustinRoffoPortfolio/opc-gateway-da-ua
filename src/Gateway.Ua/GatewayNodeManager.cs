@@ -26,6 +26,11 @@ public class GatewayNodeManager : CustomNodeManager2
     // que comparten un tramo del nombre no dupliquen la carpeta intermedia.
     private readonly Dictionary<string, FolderState> _folders = new();
 
+    // Nodos de diagnostico, indexados por su nombre corto. Separados de
+    // _bindings porque no salen de la cache: los llena el snapshot que arma el
+    // host, que es el unico que ve las dos mitades del gateway.
+    private readonly Dictionary<string, BaseDataVariableState> _diagnosticNodes = new();
+
     public GatewayNodeManager(IServerInternal server, ApplicationConfiguration configuration,
         string namespaceUri, IReadOnlyList<TagDefinition> tagDefinitions, TagCache cache)
         : base(server, configuration, namespaceUri)
@@ -36,6 +41,34 @@ public class GatewayNodeManager : CustomNodeManager2
 
     /// Cantidad de tags publicados. La usa el arranque para loguear.
     public int TagCount => _bindings.Count;
+
+    /// <summary>
+    /// Sesiones y monitored items actuales, contados desde el servidor.
+    /// </summary>
+    /// <remarks>
+    /// Se cuenta aca y no se lee de SessionsDiagnosticsSummary porque ese nodo
+    /// aparecia vacio con sesion anonima y nunca se supo por que. Un numero que
+    /// se sabe de donde sale vale mas que uno oficial que a veces miente.
+    /// </remarks>
+    public UaServerStatus GetServerStatus()
+    {
+        try
+        {
+            var sessions = Server.SessionManager?.GetSessions()?.Count ?? 0;
+            var subscriptions = Server.SubscriptionManager?.GetSubscriptions();
+
+            var monitoredItems = subscriptions?.Sum(s => s.MonitoredItemCount) ?? 0;
+
+            return new UaServerStatus(sessions, monitoredItems);
+        }
+        catch (Exception)
+        {
+            // El diagnostico nunca puede tirar abajo al que lo consulta: si el
+            // server esta arrancando o apagandose, estos managers pueden no
+            // estar. Cero es menos malo que una excepcion en el timer.
+            return new UaServerStatus(0, 0);
+        }
+    }
 
     public override void CreateAddressSpace(IDictionary<NodeId, IList<IReference>> externalReferences)
     {
@@ -66,8 +99,75 @@ public class GatewayNodeManager : CustomNodeManager2
                 AddTag(root, tag, _cache.Get(tag.OpcUaName));
             }
 
+            AddDiagnosticNodes(root);
+
             AddPredefinedNode(SystemContext, root);
         }
+    }
+
+    /// <summary>
+    /// Arma las tres carpetas de diagnostico bajo la raiz Gateway.
+    /// </summary>
+    /// <remarks>
+    /// Todos los nodos son String salvo los contadores, que son Int64/Double.
+    /// El estado del vinculo va como texto y no como enum numerico: el valor lo
+    /// tiene que poder leer un operador en UaExpert sin tabla de conversion.
+    /// </remarks>
+    private void AddDiagnosticNodes(NodeState root)
+    {
+        var status = GetOrAddFolder(root, "Gateway.Status", "Status");
+        AddDiagnosticVariable(status, "LinkState", DataTypeIds.String);
+        AddDiagnosticVariable(status, "LastSuccessfulCycleUtc", DataTypeIds.String);
+        AddDiagnosticVariable(status, "SecondsSinceLastCycle", DataTypeIds.Double);
+        AddDiagnosticVariable(status, "ReconnectAttempts", DataTypeIds.Int32);
+        AddDiagnosticVariable(status, "LastError", DataTypeIds.String);
+        AddDiagnosticVariable(status, "UptimeSeconds", DataTypeIds.Double);
+
+        var counters = GetOrAddFolder(root, "Gateway.Counters", "Counters");
+        AddDiagnosticVariable(counters, "TotalConfigured", DataTypeIds.Int32);
+        AddDiagnosticVariable(counters, "Good", DataTypeIds.Int32);
+        AddDiagnosticVariable(counters, "Uncertain", DataTypeIds.Int32);
+        AddDiagnosticVariable(counters, "Bad", DataTypeIds.Int32);
+        AddDiagnosticVariable(counters, "WaitingForInitialData", DataTypeIds.Int32);
+        AddDiagnosticVariable(counters, "SilentNeverAnswered", DataTypeIds.Int32);
+        AddDiagnosticVariable(counters, "SilentPreviouslyAnswered", DataTypeIds.Int32);
+        AddDiagnosticVariable(counters, "ReadCycles", DataTypeIds.Int64);
+        AddDiagnosticVariable(counters, "ReadFailures", DataTypeIds.Int64);
+        AddDiagnosticVariable(counters, "DaConnections", DataTypeIds.Int64);
+        AddDiagnosticVariable(counters, "DaDisconnections", DataTypeIds.Int64);
+
+        var performance = GetOrAddFolder(root, "Gateway.Performance", "Performance");
+        AddDiagnosticVariable(performance, "LastCycleMs", DataTypeIds.Double);
+        AddDiagnosticVariable(performance, "AvgCycleMs", DataTypeIds.Double);
+        AddDiagnosticVariable(performance, "MaxCycleMs", DataTypeIds.Double);
+        AddDiagnosticVariable(performance, "ConfiguredIntervalMs", DataTypeIds.Int32);
+        AddDiagnosticVariable(performance, "ConnectedUaSessions", DataTypeIds.Int32);
+        AddDiagnosticVariable(performance, "MonitoredItems", DataTypeIds.Int32);
+        AddDiagnosticVariable(performance, "WorkingSetMb", DataTypeIds.Double);
+    }
+
+    /// <summary>Crea un nodo de diagnostico y lo registra para poder publicarlo.</summary>
+    private void AddDiagnosticVariable(NodeState parent, string name, NodeId dataType)
+    {
+        var nodeId = $"{parent.BrowseName.Name}.{name}";
+
+        var variable = new BaseDataVariableState(parent)
+        {
+            NodeId = new NodeId($"Gateway.{nodeId}", NamespaceIndex),
+            BrowseName = new QualifiedName(name, NamespaceIndex),
+            DisplayName = name,
+            TypeDefinitionId = VariableTypeIds.BaseDataVariableType,
+            ReferenceTypeId = ReferenceTypeIds.HasComponent,
+            DataType = dataType,
+            ValueRank = ValueRanks.Scalar,
+            AccessLevel = AccessLevels.CurrentRead,
+            UserAccessLevel = AccessLevels.CurrentRead,
+            StatusCode = StatusCodes.Good,
+            Timestamp = DateTime.UtcNow
+        };
+
+        parent.AddChild(variable);
+        _diagnosticNodes[nodeId] = variable;
     }
 
     /// Copia a los nodos el ultimo estado conocido de cada tag y avisa a los
@@ -79,6 +179,69 @@ public class GatewayNodeManager : CustomNodeManager2
             foreach (var (node, tagName) in _bindings)
                 Publish(node, _cache.Get(tagName));
         }
+    }
+
+    /// <summary>
+    /// Vuelca el snapshot a los nodos de diagnostico. Lo llama el host, que es
+    /// quien puede armarlo: el node manager no ve el lado DA.
+    /// </summary>
+    /// <remarks>
+    /// Todos los nodos se publican con StatusCode Good aunque reporten una
+    /// falla. Por especificacion un DataValue con StatusCode de master Bad no
+    /// transporta valor, asi que un nodo "el DA esta caido" publicado como Bad
+    /// se veria vacio en el cliente justo cuando hace falta leerlo. La falla va
+    /// en el contenido, nunca en la calidad del nodo que la reporta.
+    /// </remarks>
+    public void PublishDiagnostics(GatewaySnapshot snapshot)
+    {
+        lock (Lock)
+        {
+            var now = DateTime.UtcNow;
+
+            SetDiagnostic("Status.LinkState", snapshot.Status.LinkState.ToString(), now);
+            SetDiagnostic("Status.LastSuccessfulCycleUtc",
+                snapshot.Status.LastSuccessfulCycleUtc?.ToString("O") ?? "nunca", now);
+            SetDiagnostic("Status.SecondsSinceLastCycle",
+                snapshot.Status.SecondsSinceLastCycle ?? 0d, now);
+            SetDiagnostic("Status.ReconnectAttempts", snapshot.Status.ReconnectAttempts, now);
+            SetDiagnostic("Status.LastError", snapshot.Status.LastError ?? "", now);
+            SetDiagnostic("Status.UptimeSeconds", snapshot.Status.UptimeSeconds, now);
+
+            var c = snapshot.Counters;
+            SetDiagnostic("Counters.TotalConfigured", c.TotalConfigured, now);
+            SetDiagnostic("Counters.Good", c.Good, now);
+            SetDiagnostic("Counters.Uncertain", c.Uncertain, now);
+            SetDiagnostic("Counters.Bad", c.Bad, now);
+            SetDiagnostic("Counters.WaitingForInitialData", c.WaitingForInitialData, now);
+            SetDiagnostic("Counters.SilentNeverAnswered", c.SilentNeverAnswered, now);
+            SetDiagnostic("Counters.SilentPreviouslyAnswered", c.SilentPreviouslyAnswered, now);
+            SetDiagnostic("Counters.ReadCycles", c.ReadCycles, now);
+            SetDiagnostic("Counters.ReadFailures", c.ReadFailures, now);
+            SetDiagnostic("Counters.DaConnections", c.DaConnections, now);
+            SetDiagnostic("Counters.DaDisconnections", c.DaDisconnections, now);
+
+            var p = snapshot.Performance;
+            SetDiagnostic("Performance.LastCycleMs", p.LastCycleMs, now);
+            SetDiagnostic("Performance.AvgCycleMs", p.AvgCycleMs, now);
+            SetDiagnostic("Performance.MaxCycleMs", p.MaxCycleMs, now);
+            SetDiagnostic("Performance.ConfiguredIntervalMs", p.ConfiguredIntervalMs, now);
+            SetDiagnostic("Performance.ConnectedUaSessions", p.ConnectedUaSessions, now);
+            SetDiagnostic("Performance.MonitoredItems", p.MonitoredItems, now);
+            SetDiagnostic("Performance.WorkingSetMb", Math.Round(p.WorkingSetMb, 1), now);
+        }
+    }
+
+    private void SetDiagnostic(string key, object value, DateTime timestamp)
+    {
+        if (!_diagnosticNodes.TryGetValue(key, out var node)) return;
+
+        node.Value = value;
+        node.StatusCode = StatusCodes.Good;
+
+        // Aca el SourceTimestamp si es la hora del gateway, y esta bien: el dato
+        // se origina aca. Es lo contrario de un tag, que lo trae del servidor DA.
+        node.Timestamp = timestamp;
+        node.ClearChangeMasks(SystemContext, false);
     }
 
     /// Vuelca un estado de la cache a un nodo UA.
