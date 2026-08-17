@@ -79,3 +79,54 @@ de registro, que es el criterio de "listo" de la fase.
 esto: el driver cumplía su contrato. Es un bug que solo aparece integrando contra
 un sistema real, y el instrumento que lo acorraló fue el log en el borde exacto
 entre los dos sistemas, no el test.
+
+## Operar el simulador MatrikonOPC durante las pruebas
+
+Tres comportamientos que cuestan una sesión entera si se descubren en el momento.
+
+### El servidor DA no es la ventana que se ve en el escritorio
+
+Es un componente COM **out-of-process**: Windows lo lanza a demanda cuando un
+cliente pide el ProgID. La ventana que se abre desde el menú de inicio es el
+*configurador* (`PSTCFG.exe`), no el servidor (`OPCSim.exe`). Cerrarla no deja al
+servidor indisponible.
+
+- Para simular **DA caído**: `Stop-Process -Name OPCSim -Force`. COM lo relanza
+  solo en el siguiente intento de conexión, lo cual es bueno: la recuperación no
+  depende de que nadie levante nada a mano.
+- Para simular **DA ausente de verdad**: apuntar el gateway a un ProgID
+  inexistente en `appsettings.json` (se usó `Matrikon.OPC.NoExiste.1`). Da
+  `0x80040154 CoCreateInstanceEx: Clase no registrada`.
+
+Cuando el servidor muere, `Read` tira `0x800706BA` (RPC server unavailable) y el
+objeto COM queda inservible: no es un error transitorio. Por eso el gateway
+recrea el driver entero en vez de reintentar la lectura.
+
+### El servidor relanzado vuelve vacío
+
+Los aliases importados viven en el archivo de configuración, no en el proceso. Al
+matar `OPCSim`, COM lo relanza con la configuración por defecto y los ItemIDs
+importados dejan de existir: el gateway pide items que del otro lado ya no están y
+el alta se rechaza, correctamente.
+
+Para volver a poblarlo hay que cargar el escenario de nuevo en el configurador
+(File → Open sobre el `.opcsim.xml`). El gateway se reengancha solo en el
+siguiente reintento, sin reiniciarlo.
+
+Esto no se nota con items nativos del simulador (`Random.Real8` y similares), que
+existen siempre. Aparece con escenarios de carga importados.
+
+### El configurador crashea si se lo usa con el servidor muerto
+
+Si se intenta cargar un `.opcsim.xml` con `OPCSim` matado, el configurador da
+`Error 0x800706BA occurred loading configuration from file` y a continuación un
+access violation en `PSTCFG.exe`, quedando inconsistente (`Clients: -1`,
+`Server Time: n/a`).
+
+Salida: cerrar el configurador —forzándolo con `Stop-Process -Name PSTCFG -Force`
+si no responde— y abrirlo de nuevo. Al arrancar limpio relanza el servidor por COM
+y la carga funciona. Es un bug del configurador, no del gateway.
+
+Al cargar una configuración con el gateway conectado, Matrikon avisa que los
+items OPC se invalidan. Es el mismo escenario que en planta produce una recarga de
+configuración del servidor DA, y el gateway lo resuelve con el reintento de altas.

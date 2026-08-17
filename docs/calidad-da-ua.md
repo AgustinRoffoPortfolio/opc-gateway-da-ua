@@ -145,3 +145,17 @@ meses después en un historiador.
   a lo que la PoC quiere demostrar, no porque no se pueda.
 
 Es una extensión de la traducción, no un cambio de diseño.
+
+
+## Nota sobre una divergencia detectada
+
+Un documento de diseño previo del proyecto mapeaba `Bad_NotConnected` a
+`BadCommunicationError`. El código no lo sigue: aplica la tabla normativa de la
+especificación OPC UA (Parte 8, Anexo A), que le hace corresponder
+`BadNotConnected`.
+
+Se resolvió a favor de la norma. `BadNotConnected` dice que no hay vínculo con la
+fuente del dato; `BadCommunicationError` sugiere una falla de comunicación en
+curso, que es un diagnóstico distinto y mandaría a revisar la red por algo que
+puede ser un servidor apagado. Verificado en UaExpert durante la Fase 4: el código
+publica `BadNotConnected [0x808A0000]`.

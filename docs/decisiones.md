@@ -225,3 +225,40 @@ Dos aclaraciones para no prometer de más:
   simulador, que no refresca timestamps sin un cliente DA que lo mantenga
   despierto. Ver la anomalía en
   [operacion.md](operacion.md#sourcetimestamp-atrasado-fase-2-confirmado-en-fase-3).
+
+## 14. Una duda no se publica como `Bad`
+
+Cuando el servidor DA rechaza el alta de un item, el rechazo tiene dos causas que
+desde una sola respuesta no se distinguen: el ItemID no existe (permanente) o el
+servidor todavía no terminó de levantar (transitorio). El gateway publicaba esa
+ambigüedad como `NotConnected`, que es master `Bad`.
+
+El problema apareció en la Fase 4, en la ventana de reconexión: un tag que venía
+funcionando y era rechazado transitoriamente al reengancharse perdía en el cliente
+UA el último valor conocido y su `SourceTimestamp`, y mostraba `Null` con una hora
+fresca. Quedaba peor informado durante el reenganche que durante la caída, lo cual
+es al revés de lo razonable.
+
+La causa no está en la cache, que conservaba el valor previo correctamente, sino
+en la especificación: **un `DataValue` con `StatusCode` de master `Bad` no
+transporta valor**. El dato se declara inválido, así que el stack lo anula y
+estampa la hora actual. Se verificó comparando, en el mismo instante, lo que la
+cache entregaba al nodo contra lo que mostraba UaExpert: valor y timestamp buenos
+de un lado, `Null` y hora fresca del otro. También explica por qué un tag que
+nunca tuvo dato muestra un timestamp reciente en vez de 1601.
+
+La regla que resultó: **una muestra `NotConnected` no pisa un tag que ya tiene
+valor.** Se conserva el estado previo sin refrescar `LastUpdateUtc`, de modo que
+la antigüedad lo siga degradando hasta `LastUsableValue`, que es `Uncertain` y sí
+transporta valor y timestamp. La duda se expresa entonces como incertidumbre, que
+es lo que significa, y el cliente conserva el último dato bueno congelado.
+
+Un rechazo confirmado en el reintento es otra cosa: llega como `ItemRejected` →
+`BadConfigurationError` y ese sí pisa. Ahí ya no hay duda sino un error de
+configuración, y perder el valor es correcto.
+
+El alcance de la regla es deliberadamente estrecho. `NotConnected` no es una
+respuesta del servidor DA sino un estado que fabrica el gateway; un `Bad` legítimo
+que sí venga del DA (falla de dispositivo, fuera de servicio) se publica como
+siempre. La cache es la única pieza que puede aplicar esta regla, porque es la
+única que conoce el estado anterior.
