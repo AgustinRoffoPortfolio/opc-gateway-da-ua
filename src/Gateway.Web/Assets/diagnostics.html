@@ -230,8 +230,9 @@ async function pollTags() {
         <td class="name">${esc(r.uaName)}</td>
         <td class="name">${esc(r.daName ?? "—")}</td>
         <td>${r.scaledValue === null ? "—" : esc(r.scaledValue)}</td>
-        <td class="q-${esc(r.qualityMaster)}">${esc(r.qualityMaster)}
-            <span class="sub">${esc(r.qualitySubstatus)}</span></td>
+        <td class="q-${esc(r.qualityMaster)}">${esc(r.qualityMaster)}${
+            r.qualitySubstatus === r.qualityMaster ? ""
+              : ` <span class="sub">${esc(r.qualitySubstatus)}</span>`}</td>
         <td>${r.sourceTimestamp === null
               ? '<span class="sub">nunca respondió</span>'
               : hhmmss(r.sourceTimestamp)}</td>
