@@ -3,6 +3,12 @@
   <ItemGroup>
     <ProjectReference Include="..\Gateway.Core\Gateway.Core.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- Acceso al framework compartido de ASP.NET Core sin convertir este
+         proyecto en una app web: el arranque sigue siendo de Gateway.Host.
+         Es transitivo, asi que el host lo hereda sin cambios en su csproj. -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
 
   <PropertyGroup>
     <TargetFramework>net10.0-windows</TargetFramework>

@@ -8,6 +8,7 @@ using Opc.Ua.Configuration;
 using Serilog;
 using Gateway.Da;
 using Gateway.Host;
+using Gateway.Web;
 
 // El driver OPC DA exige un proceso de 32 bits: esto tiene que fallar
 // ruidosamente si algun dia alguien saca el PlatformTarget del csproj.
@@ -53,6 +54,11 @@ var options = configuration.GetSection("Ua").Get<UaOptions>()
 
 var daOptions = configuration.GetSection("Da").Get<DaOptions>()
     ?? throw new InvalidOperationException("Falta la seccion 'Da' en appsettings.json");
+
+// La web es opcional: si falta la seccion se usan los defaults del record en
+// vez de tirar el arranque abajo, porque un gateway sin pagina de diagnostico
+// sigue siendo un gateway.
+var webOptions = configuration.GetSection("Web").Get<WebOptions>() ?? new WebOptions();
 
 // Logger de toda la aplicacion.
 Log.Logger = new LoggerConfiguration()
@@ -167,6 +173,9 @@ var interval = TimeSpan.FromMilliseconds(options.UpdateIntervalMs);
 // ya levantado: es el momento en que el gateway empieza a prestar servicio.
 var startedUtc = DateTime.UtcNow;
 
+// Ultima foto publicada, para que la capa web la sirva sin volver a armarla.
+var snapshots = new SnapshotHolder();
+
 using var timer = new Timer(_ =>
 {
     try
@@ -177,11 +186,18 @@ using var timer = new Timer(_ =>
         // unico punto que ve las dos mitades: el estado del vinculo DA lo tiene
         // el servicio de adquisicion, y Gateway.Ua no puede depender del host.
         if (server.NodeManager is { } nodeManager)
-            nodeManager.PublishDiagnostics(GatewaySnapshot.Build(
+        {
+            var snapshot = GatewaySnapshot.Build(
                 cache,
                 acquisition.GetStatus(),
                 nodeManager.GetServerStatus(),
-                startedUtc));
+                startedUtc);
+
+            // Un unico Build por ciclo alimenta las dos vistas: los nodos UA y
+            // la pagina sirven el mismo objeto, no dos fotos parecidas.
+            nodeManager.PublishDiagnostics(snapshot);
+            snapshots.Publish(snapshot);
+        }
     }
     catch (Exception ex)
     {
@@ -193,6 +209,33 @@ using var timer = new Timer(_ =>
 
 Log.Information("Servidor OPC UA escuchando en {Endpoint}", options.EndpointUrl);
 Log.Information("Ciclo de actualizacion: {IntervalMs} ms", options.UpdateIntervalMs);
+
+// El diagnostico web es accesorio: si no puede levantar (puerto ocupado, por
+// ejemplo) se avisa y se sigue. Tumbar el gateway entero por la pagina que
+// mira como esta el gateway seria exactamente al reves de lo que se quiere.
+DiagnosticsServer? diagnosticsServer = null;
+
+if (webOptions.Enabled)
+{
+    try
+    {
+        diagnosticsServer = new DiagnosticsServer(
+            webOptions, snapshots, cache,
+            new Serilog.Extensions.Logging.SerilogLoggerFactory(Log.Logger));
+
+        await diagnosticsServer.StartAsync();
+        Log.Information("Diagnostico web en {Url}", webOptions.ListenUrl);
+    }
+    catch (Exception ex)
+    {
+        Log.Error(ex, "No se pudo levantar el diagnostico web; el gateway sigue sin el");
+        diagnosticsServer = null;
+    }
+}
+else
+{
+    Log.Information("Diagnostico web deshabilitado por configuracion");
+}
 
 // Senaliza el apagado desde Ctrl+C o desde el cierre del proceso (por ejemplo,
 // el SCM de un servicio de Windows), nunca desde una tecla en una consola que
@@ -210,6 +253,12 @@ AppDomain.CurrentDomain.ProcessExit += (_, _) => shutdownRequested.TrySetResult(
 await shutdownRequested.Task;
 
 Log.Information("Deteniendo servidor...");
+
+// Primero la web: deja de aceptar requests antes de que empiecen a
+// desaparecer las piezas que consulta.
+if (diagnosticsServer is not null)
+    await diagnosticsServer.DisposeAsync();
+
 await daShutdown.CancelAsync();
 daThread.Join(TimeSpan.FromSeconds(5));
 await application.StopAsync();

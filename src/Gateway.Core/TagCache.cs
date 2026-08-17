@@ -50,6 +50,12 @@ public sealed class TagCache
     // y en l/s, por ejemplo). La relacion es uno a muchos.
     private readonly Dictionary<string, List<TagDefinition>> _definitionsByDaName;
 
+    // Camino inverso, solo para diagnostico: la relacion DA -> UA es uno a
+    // muchos, pero UA -> DA es uno a uno, asi que se puede indexar directo.
+    // Se arma una vez en el constructor y despues no se toca, por eso no es
+    // concurrente: el hilo del request solo lee.
+    private readonly Dictionary<string, string> _daNameByUaName;
+
     // ConcurrentDictionary porque el hilo que lee DA y el que publica UA son
     // distintos: uno escribe mientras el otro lee, sin lock explicito.
     private readonly ConcurrentDictionary<string, TagState> _stateByUaName = new();
@@ -71,9 +77,13 @@ public sealed class TagCache
             .GroupBy(d => d.OpcDaName)
             .ToDictionary(g => g.Key, g => g.ToList());
 
+        _daNameByUaName = _definitionsByDaName
+            .SelectMany(entry => entry.Value.Select(d => (d.OpcUaName, entry.Key)))
+            .ToDictionary(pair => pair.OpcUaName, pair => pair.Key);
+
         var now = DateTime.UtcNow;
 
-        // Todo tag arranca declarado pero sin dato. Sin esto, un cliente UA que
+        // Todo tag arranca declarado pero sin dato.Sin esto, un cliente UA que
         // conecta antes de la primera lectura recibiria "tag desconocido", que
         // es una causa distinta y mandaria a buscar el problema al lugar equivocado.
         //
@@ -93,6 +103,14 @@ public sealed class TagCache
 
     /// <summary>ItemIDs a pedirle al servidor DA.</summary>
     public IEnumerable<string> DaNames => _definitionsByDaName.Keys;
+
+    /// <summary>
+    /// ItemID DA que alimenta a un nodo UA, o null si el nombre no esta
+    /// configurado. Es para la vista de diagnostico: ver los dos nombres juntos
+    /// es lo que permite decidir si un tag mudo es culpa del CSV o del servidor.
+    /// </summary>
+    public string? GetDaName(string uaName) =>
+        _daNameByUaName.GetValueOrDefault(uaName);
 
     /// <summary>
     /// Estado actual de un tag, ya degradado si dejo de refrescarse. Un tag que
