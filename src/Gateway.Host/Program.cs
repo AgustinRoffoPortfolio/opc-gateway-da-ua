@@ -7,6 +7,7 @@ using Opc.Ua;
 using Opc.Ua.Configuration;
 using Serilog;
 using Gateway.Da;
+using Gateway.Host;
 
 // El driver OPC DA exige un proceso de 32 bits: esto tiene que fallar
 // ruidosamente si algun dia alguien saca el PlatformTarget del csproj.
@@ -149,7 +150,8 @@ await application.StartAsync(server);
 // El apartment se fija aca de forma explicita en vez de heredarlo del hilo que
 // nos toque, que es como venia funcionando de rebote.
 var daShutdown = new CancellationTokenSource();
-var daThread = new Thread(() => RunDaLoop(cache, daOptions, daShutdown.Token))
+var acquisition = new DaAcquisitionService(cache, daOptions);
+var daThread = new Thread(() => acquisition.Run(daShutdown.Token))
 {
     IsBackground = true,
     Name = "OPC DA polling"
@@ -199,144 +201,3 @@ daThread.Join(TimeSpan.FromSeconds(5));
 await application.StopAsync();
 Log.Information("Servidor detenido.");
 await Log.CloseAndFlushAsync();
-
-/// <summary>
-/// Ciclo de adquisicion DA: conecta, lee y vuelca en la cache hasta que se pida
-/// el apagado. Si el vinculo se cae, reconecta solo.
-/// </summary>
-/// <remarks>
-/// La reconexion recrea el driver entero en vez de reintentar la lectura: cuando
-/// el servidor DA muere, COM devuelve 0x800706BA (RPC server unavailable) y el
-/// objeto queda inservible, no en un error transitorio. Reintentar sobre el
-/// mismo grupo falla para siempre.
-///
-/// Mientras no hay vinculo el gateway no publica nada distinto a proposito: la
-/// cache degrada sola por antiguedad y esa degradacion llega al cliente UA en el
-/// StatusCode. Este loop no toca la cache, solo la alimenta cuando puede.
-/// </remarks>
-static void RunDaLoop(TagCache cache, DaOptions options, CancellationToken token)
-{
-    // El stack completo sirve una vez; repetido cada pocos segundos mientras el
-    // DA sigue caido tapa el log y esconde lo que si cambia. Se loguea entero al
-    // primer fallo y despues solo el mensaje, hasta que una conexion buena
-    // reinicie el ciclo.
-    var faultLogged = false;
-
-    while (!token.IsCancellationRequested)
-    {
-        try
-        {
-            RunDaSession(cache, options, token);
-            faultLogged = false;
-        }
-        catch (Exception ex)
-        {
-            // Cualquier fallo del vinculo cae aca: no se distingue por tipo de
-            // excepcion porque COM tiene muchas formas de decir lo mismo, y la
-            // respuesta es siempre la misma: tirar todo y reconectar.
-            if (faultLogged)
-                Log.Warning("Sigue caido el vinculo con el servidor DA: {Mensaje}", ex.Message);
-            else
-                Log.Warning(ex, "Se corto el vinculo con el servidor DA");
-
-            faultLogged = true;
-        }
-
-        if (token.IsCancellationRequested) break;
-
-        Log.Information("Reintentando conexion DA en {Ms} ms", options.ReconnectDelayMs);
-        token.WaitHandle.WaitOne(options.ReconnectDelayMs);
-    }
-
-    Log.Information("Ciclo de adquisicion DA detenido");
-}
-/// <summary>
-/// Una sesion de adquisicion: vive mientras el vinculo DA funcione. Si falla,
-/// propaga y el llamador se encarga de reconectar.
-/// </summary>
-/// <remarks>
-/// Las altas rechazadas se reintentan cada ItemRetryIntervalMs en vez de darse
-/// por definitivas. Un rechazo tiene dos causas que desde una sola respuesta no
-/// se distinguen: el ItemID no existe (error de configuracion, permanente) o el
-/// servidor DA todavia no tiene su lista lista (transitorio, tipico cuando COM
-/// acaba de relanzarlo o cuando los dos procesos arrancan juntos al bootear).
-/// Reintentar resuelve el segundo caso solo y deja el primero como estaba.
-/// De paso cubre el caso de planta en que aparecen items nuevos con el gateway
-/// ya corriendo, sin obligar a reiniciarlo y sacar de servicio a los clientes UA.
-/// </remarks>
-static void RunDaSession(TagCache cache, DaOptions options, CancellationToken token)
-{
-    // El using es lo que libera las referencias COM al salir, tanto por error
-    // como por apagado. Sin esto cada reconexion dejaria un servidor DA colgado.
-    using var source = new OpcDaTagSource(options.ProgId);
-
-    source.Connect(updateRateMs: options.UpdateRateMs);
-
-    var pending = TryAddItems(cache, source, options, cache.DaNames);
-
-    Log.Information("Driver DA conectado a {ProgId}, leyendo cada {Ms} ms",
-        options.ProgId, options.UpdateRateMs);
-
-    var nextItemRetry = DateTime.UtcNow.AddMilliseconds(options.ItemRetryIntervalMs);
-
-    while (!token.IsCancellationRequested)
-    {
-        cache.Update(source.ReadAll());
-
-        if (pending.Count > 0 && DateTime.UtcNow >= nextItemRetry)
-        {
-            var before = pending.Count;
-            pending = TryAddItems(cache, source, options, pending, firstAttempt: false);
-
-            if (pending.Count < before)
-                Log.Information("Se dieron de alta {Count} items que estaban rechazados",
-                    before - pending.Count);
-            nextItemRetry = DateTime.UtcNow.AddMilliseconds(options.ItemRetryIntervalMs);
-        }
-
-        token.WaitHandle.WaitOne(options.UpdateRateMs);
-    }
-}
-
-/// <summary>
-/// Intenta dar de alta los items indicados y devuelve los que siguen rechazados.
-/// </summary>
-/// <remarks>
-/// Los rechazados se marcan en la cache y no solo en el log: sin eso el tag se
-/// queda sin muestras y la degradacion por antiguedad lo reporta como problema
-/// de comunicacion, mandando a revisar la red por un ItemID mal escrito.
-/// </remarks>
-/// <param name="firstAttempt">
-/// Primer alta de la sesion. Un rechazo en este momento no permite concluir que
-/// el ItemID no exista: si el servidor DA acaba de arrancar puede no tener su
-/// lista lista todavia. Se marca como "sin datos" y recien un rechazo en el
-/// reintento posterior lo confirma como error de configuracion.
-/// </param>
-static IReadOnlyList<string> TryAddItems(
-    TagCache cache, OpcDaTagSource source, DaOptions options, IEnumerable<string> itemIds,
-    bool firstAttempt = true)
-{
-    var rejected = source.AddItems(itemIds);
-    if (rejected.Count == 0) return rejected;
-
-    // El detalle item por item sirve la primera vez; repetido en cada reintento
-    // son cientos de lineas por hora diciendo lo mismo. Despues alcanza el conteo.
-    if (firstAttempt)
-        foreach (var itemId in rejected)
-            Log.Warning("El servidor DA rechazo el item {ItemId}: fuera de servicio, se reintenta en {Ms} ms",
-                itemId, options.ItemRetryIntervalMs);
-    else
-        Log.Information("Siguen rechazados {Count} items, proximo reintento en {Ms} ms",
-            rejected.Count, options.ItemRetryIntervalMs);
-
-    // En el primer intento el rechazo todavia no distingue "no existe" de
-    // "el servidor no termino de levantar", asi que se publica la duda y no una
-    // conclusion. Confirmado por el reintento, si pasa a error de configuracion.
-    var quality = firstAttempt ? TagQuality.NotConnected : TagQuality.ItemRejected;
-
-    cache.Update(rejected.ToDictionary(
-        itemId => itemId,
-        _ => TagSample.NoData(quality)));
-
-    return rejected;
-}
