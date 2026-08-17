@@ -72,6 +72,10 @@ Log.Logger = new LoggerConfiguration()
     // gateway OPC confunden: la web es accesorio, no el producto. Si el
     // arranque falla de verdad, eso sale en Error y se sigue viendo.
     .MinimumLevel.Override("Microsoft.Hosting.Lifetime", Serilog.Events.LogEventLevel.Warning)
+    // La pagina pide el diagnostico una vez por segundo y ASP.NET Core loguea
+    // cuatro lineas por request: sin esto el log del gateway queda 99% ruido HTTP
+    // y los WRN del vinculo DA, que son los que importan, quedan sepultados.
+    .MinimumLevel.Override("Microsoft.AspNetCore", Serilog.Events.LogEventLevel.Warning)
     .WriteTo.Console()
     .CreateLogger();
 

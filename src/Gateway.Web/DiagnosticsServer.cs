@@ -56,13 +56,21 @@ public sealed class DiagnosticsServer : IAsyncDisposable
             .GetManifestResourceStream("diagnostics.html");
         var pageHtml = pageStream is null ? null : new StreamReader(pageStream).ReadToEnd();
 
-        _app.MapGet("/", () =>
-            pageHtml is null
+        // La pagina no cambia de URL ni de nombre cuando se recompila, asi que
+        // el navegador no tiene como enterarse de que hay una version nueva:
+        // sin esto haria falta un hard refresh cada vez. En la Fase 7, como
+        // servicio, es la diferencia entre que el operador vea el estado actual
+        // o el HTML que le quedo cacheado hace tres meses.
+        _app.MapGet("/", (HttpContext http) =>
+        {
+            http.Response.Headers.CacheControl = "no-cache, no-store";
+            return pageHtml is null
                 ? Results.Text(
                     "No se encontro el recurso embebido diagnostics.html.",
                     "text/plain; charset=utf-8",
                     statusCode: StatusCodes.Status500InternalServerError)
-                : Results.Text(pageHtml, "text/html; charset=utf-8"));
+                : Results.Text(pageHtml, "text/html; charset=utf-8");
+        });
 
         // La foto ya armada. Null solo durante los primeros milisegundos del
         // arranque: se responde 503 en vez de un JSON vacio, para que la pagina
