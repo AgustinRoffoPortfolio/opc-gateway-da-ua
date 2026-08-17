@@ -48,6 +48,22 @@ public sealed class DiagnosticsServer : IAsyncDisposable
 
         _app = builder.Build();
 
+        // La pagina viaja embebida en el assembly (ver el csproj) y se lee una
+        // sola vez al arrancar: es el mismo texto en cada request. Si el recurso
+        // faltara, la vista responde 500 pero los endpoints JSON siguen vivos:
+        // perder la pagina no tiene por que apagar el diagnostico.
+        using var pageStream = typeof(DiagnosticsServer).Assembly
+            .GetManifestResourceStream("diagnostics.html");
+        var pageHtml = pageStream is null ? null : new StreamReader(pageStream).ReadToEnd();
+
+        _app.MapGet("/", () =>
+            pageHtml is null
+                ? Results.Text(
+                    "No se encontro el recurso embebido diagnostics.html.",
+                    "text/plain; charset=utf-8",
+                    statusCode: StatusCodes.Status500InternalServerError)
+                : Results.Text(pageHtml, "text/html; charset=utf-8"));
+
         // La foto ya armada. Null solo durante los primeros milisegundos del
         // arranque: se responde 503 en vez de un JSON vacio, para que la pagina
         // distinga "todavia no hay dato" de "el gateway dice que todo esta en cero".
