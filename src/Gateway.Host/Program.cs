@@ -67,6 +67,11 @@ Log.Logger = new LoggerConfiguration()
     // de la clase que lo hospeda.
     .MinimumLevel.Override("Opc.Ua", Serilog.Events.LogEventLevel.Warning)
     .MinimumLevel.Override("Gateway.Ua.UaServer", Serilog.Events.LogEventLevel.Warning)
+    // El ciclo de vida del host web anuncia su arranque con mensajes de
+    // aplicacion web ("Application started", "Hosting environment") que en un
+    // gateway OPC confunden: la web es accesorio, no el producto. Si el
+    // arranque falla de verdad, eso sale en Error y se sigue viendo.
+    .MinimumLevel.Override("Microsoft.Hosting.Lifetime", Serilog.Events.LogEventLevel.Warning)
     .WriteTo.Console()
     .CreateLogger();
 
