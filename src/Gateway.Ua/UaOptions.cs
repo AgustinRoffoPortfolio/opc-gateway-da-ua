@@ -11,4 +11,10 @@ public class UaOptions
 
     public string PkiRoot { get; set; } = "pki";
     public bool AutoAcceptUntrustedCertificates { get; set; } = true;
+
+    /// Nodos de diagnostico del stack UA (sesiones, suscripciones, contadores).
+    /// Externalizado para poder medir su costo en memoria: tienen precio y hay
+    /// que poder correr con y sin ellos en la misma sesion. Default true para
+    /// no cambiar el comportamiento existente.
+    public bool DiagnosticsEnabled { get; set; } = true;
 }

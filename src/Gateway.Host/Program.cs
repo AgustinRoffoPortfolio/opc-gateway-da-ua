@@ -127,8 +127,9 @@ Log.Information("PKI en {PkiRoot} (auto-aceptar: {Auto})",
 // apagados por default en el stack: el address space los expone igual, pero
 // no se llenan y EnabledFlag no se deja escribir en runtime. Los necesitamos
 // para ver sesiones, suscripciones y contadores del servidor desde un cliente UA.
-application.ApplicationConfiguration.ServerConfiguration.DiagnosticsEnabled = true;
-Log.Information("Diagnosticos del servidor UA habilitados");
+application.ApplicationConfiguration.ServerConfiguration.DiagnosticsEnabled = options.DiagnosticsEnabled;
+Log.Information("Diagnosticos del servidor UA: {Estado}",
+    options.DiagnosticsEnabled ? "habilitados" : "deshabilitados");
 
 // Crea el certificado propio del servidor la primera vez que corre.
 await application.CheckApplicationInstanceCertificatesAsync(silent: true);

@@ -200,19 +200,18 @@ medirse con esta configuración**, justamente porque acá todos los valores
 cambian en cada ciclo. Queda anotado como optimización pendiente, no como
 corrección de un bug.
 
-**Nota sobre la configuración.** Los números de la corrida 1 se midieron con los
-diagnósticos del servidor **deshabilitados** (el default del stack). Se
-habilitaron después, para esta verificación, y quedaron habilitados en el
-código. Mantener contadores por sesión y por suscripción tiene costo, así que
-una corrida futura no es directamente comparable contra esta tabla.
+**Nota sobre la configuración — resuelto en la corrida 2.** Los números de esta
+tabla se midieron con los diagnósticos del servidor **deshabilitados** (el default
+del stack). Se habilitaron después y quedaron habilitados en el código, así que
+esta nota advertía que una corrida futura no sería directamente comparable, y
+señalaba como evidencia los 148,7 MB medidos en Fase 5 contra los 72,7 MB de acá.
 
-Ya hay evidencia de que la diferencia no es despreciable: una corrida posterior
-del mismo escalón de 8.000, durante la Fase 5 y con la página de diagnóstico
-sirviendo además de los `ServerDiagnostics` habilitados, midió **148,7 MB** contra
-los 72,7 MB de esta tabla. No alcanza para atribuirle la diferencia a una causa
-—son dos cambios a la vez y una sola medición—, pero sí para no citar los 72,7 MB
-como el consumo del gateway tal como está hoy. La corrida 2 debería medir las dos
-configuraciones en la misma sesión.
+La corrida 2 midió las dos configuraciones en la misma sesión y **la advertencia
+resultó equivocada**: el costo de los diagnósticos es de 4,2 MB (5,6%), dentro del
+ruido de la medición. Lo que fallaba era la métrica, no la configuración —Working
+Set oscila ±25 MB solo, por el recorte del sistema operativo. Los 72,7 MB de esta
+tabla caen dentro del rango observado para esa misma configuración; los 148,7 MB
+de Fase 5 no se reprodujeron. Ver [Corrida 2](#corrida-2--18082026--memoria-dos-configuraciones-en-la-misma-sesión).
 
 **Desfasaje del SourceTimestamp (~7 min) — resuelto, es del simulador.** Durante
 esta corrida el `SourceTimestamp` que llegaba a UaExpert estaba desfasado unos 7
@@ -234,3 +233,80 @@ están en [operacion.md](operacion.md). Tiene una consecuencia práctica para gr
 material de demo: conviene dejar el configurador **cerrado**, porque el desfase es
 exactamente lo que hace visible que `SourceTimestamp` y `ServerTimestamp` son dos
 relojes distintos.
+
+## Corrida 2 — 18/08/2026 — Memoria: dos configuraciones en la misma sesión
+
+### Objetivo
+
+Cerrar el asunto abierto de la corrida 1: el mismo escalón de 8.000 tags había
+medido 72,7 MB el 14/08 y 148,7 MB durante la Fase 5. Las dos corridas diferían
+en dos cosas a la vez (la página de diagnóstico sirviendo y los
+`ServerDiagnostics` del stack habilitados) y había una sola medición de cada
+lado, así que la diferencia no era atribuible.
+
+### Qué se cambió para poder medirlo
+
+`ServerConfiguration.DiagnosticsEnabled` estaba fijo en `true` en el código.
+Se externalizó a `Ua:DiagnosticsEnabled` (default `true`, no cambia el
+comportamiento existente). La página web ya tenía su flag en `Web:Enabled`. Con
+las dos palancas en configuración, las corridas se distinguen por variables de
+entorno y no por editar código entre una y otra.
+
+### Configuración de la corrida
+
+- 8.000 tags (`tags-8000.csv`), simulador con el escenario de carga abierto y el
+  configurador cerrado.
+- 20 muestras cada 30 s, 10 minutos por corrida, ambas en la misma sesión y en
+  la misma máquina sin reiniciar nada en el medio.
+- Sin clientes UA conectados: se mide el costo de tener las funciones
+  levantadas, no el de consultarlas.
+- Corrida A: `Ua:DiagnosticsEnabled=true`, `Web:Enabled=true`.
+- Corrida B: ambos en `false`.
+
+### Resultados
+
+| Corrida | Private media | Private min–max | WS media | WS min–max | Handles inicio→fin | Threads inicio→fin |
+|---|---|---|---|---|---|---|
+| A — todo habilitado | 74,8 MB | 64,8–86,7 | 95,2 MB | 74,3–124,1 | 651 → 617 | 33 → 19 |
+| B — todo deshabilitado | 70,6 MB | 59,3–81,7 | 83,6 MB | 62,5–116,1 | 602 → 575 | 29 → 17 |
+
+### Lectura de los resultados
+
+**El costo de los diagnósticos es despreciable.** 4,2 MB de diferencia en Private
+Bytes (5,6%), con los rangos casi enteramente solapados: A va de 64,8 a 86,7 y B
+de 59,3 a 81,7. Cuando el rango de una medición contiene casi entero al de la
+otra, la diferencia entre medias no es señal. La hipótesis de la corrida 1 —que
+los `ServerDiagnostics` y la página explicaban un salto de 72,7 a 148,7 MB— queda
+descartada.
+
+**La discrepancia era un artefacto de la métrica, no del gateway.** Working Set
+es memoria física mapeada y el sistema operativo la recorta cuando quiere; osciló
+±25 MB por sí sola en las dos corridas. La forma de la curva lo muestra: al
+arranque el Working Set le saca ~43 MB al privado (108 contra 64,8) y al final
+convergen (83 contra 81,1). El proceso no estaba liberando memoria — Windows le
+estaba sacando páginas prestadas a medida que se asentaba. Private Bytes es
+memoria comprometida por el proceso y nadie de afuera la toca, así que es la
+métrica que corresponde reportar.
+
+**Los 72,7 MB de la corrida 1 encajan.** Esa medición se hizo con los
+diagnósticos deshabilitados, o sea la configuración de la corrida B, cuyo Working
+Set fue de 62,5 a 116,1 MB. El número cae dentro del rango.
+
+**Los 148,7 MB de Fase 5 no encajan del todo**, y se anota sin maquillar: quedan
+por encima del máximo de Working Set observado hoy en cualquiera de las dos
+configuraciones (124,1 MB). La explicación más probable es que se haya medido
+temprano, en el pico de asentamiento —donde el Working Set está en su punto más
+alto—, o con un cliente UA conectado. No se reprodujo, así que queda como
+medición no comparable y no como consumo del gateway.
+
+**Sin fuga de handles ni de threads.** En las dos corridas los handles bajan
+(651→617 y 602→575) y los threads también, sin pendiente creciente en ningún
+tramo. La diferencia constante de ~45 handles entre A y B es Kestrel, que es
+exactamente lo esperable. Es la primera evidencia sobre el riesgo específico de
+este proyecto —handles COM que no se liberan—, aunque 10 minutos solo descartan
+una fuga grosera.
+
+### Número a citar
+
+**~70-75 MB de Private Bytes para 8.000 tags**, independientemente de si los
+diagnósticos están habilitados. No citar Working Set como consumo del gateway.
