@@ -467,3 +467,43 @@ configuración de ejemplo también se verifica: que un tag esté declarado no pr
 que exista del otro lado. El gateway, mientras tanto, se portó bien todo el
 tiempo —rechazó los items, lo reportó por tag y siguió sirviendo el resto—, que
 es exactamente lo que la Fase 3 pedía.
+
+## 23. Los nodos de diagnóstico se publican siempre con calidad `Good`
+
+Las tres carpetas `Gateway.Status`, `Gateway.Counters` y `Gateway.Performance`
+publican sus variables con `StatusCode` `Good` en todos los casos, incluso cuando
+lo que reportan es una falla. `SetDiagnostic` lo hace incondicionalmente: no hay
+camino por el que un nodo de diagnóstico salga con otra calidad.
+
+La razón es la misma física de la entrada 14, aplicada al caso simétrico. Ahí el
+problema era que un tag rechazado transitoriamente perdía su último valor bueno;
+acá sería peor: **el nodo que dice "el vínculo DA está caído" se vaciaría
+justamente por decirlo.** Un `LinkState` publicado como `Bad` llega al cliente
+como `Null`, y el operador que abre el árbol durante una caída encuentra vacío el
+único nodo que iba a explicársela. La falla va en el contenido del valor, nunca en
+la calidad del nodo que la reporta.
+
+**La alternativa que se descartó** era reflejar el estado del vínculo en el
+`StatusCode` de estos nodos, que a primera vista es más idiomático en UA: un
+cliente que ya monitorea calidad se enteraría sin tener que interpretar un string.
+Se descartó porque compra esa comodidad al precio de que el dato desaparezca
+cuando más se necesita, y porque confunde dos cosas distintas: la calidad de un
+nodo describe si *ese* dato es confiable, no si el sistema está sano.
+
+El contraste con los nodos de tag no es una inconsistencia, es el mismo criterio
+dando resultados opuestos. Un nodo de tag representa un dato que se originó en el
+servidor DA, y el gateway puede no tenerlo o tenerlo dudoso; por eso ahí un
+`StatusCode` no-`Good` es correcto y necesario, incluido el que se publica
+mientras se espera la primera lectura. Un nodo de diagnóstico representa un dato
+que se origina en el gateway mismo, y el gateway siempre conoce su propio estado:
+aunque el DA esté caído, el número de reconexiones es un dato bueno. El corolario
+está en el mismo método: en estos nodos el `SourceTimestamp` es la hora del
+gateway, y está bien por la misma razón.
+
+**El límite honesto:** un cliente UA que solo mire `StatusCode` nunca va a ver
+alarma en estas carpetas. Para saber si el gateway está sano hay que leer
+`LinkState`, `SecondsSinceLastCycle` o los contadores por calidad, o mirar los
+nodos de tag, que sí degradan. Es una consecuencia buscada y no un descuido, y
+tiene peso ahora que el gateway se distribuye empaquetado: quien lo reciba va a
+conectarle un cliente que no escribimos nosotros, y conviene que esté documentado
+en vez de que lo descubra durante una caída.
