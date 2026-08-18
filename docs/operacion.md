@@ -188,6 +188,14 @@ Sobre la carpeta publicada:
 - **Agregar** el `.opcsim.xml` del escenario de demo, el CSV de aliases y un
   `LEEME.txt` con requisitos, puesta en marcha y qué se debería ver.
 
+`config/demo-10.opcsim.xml` está versionado aunque sea un archivo generado por
+el configurador de Matrikon: son 2 KB y evita tener que abrirlo cada vez que se
+arma un paquete. Se regenera importando `config/aliases.example.csv` con
+`File → Import Aliases` y guardando con `File → Save As...`. Al importar sobre
+una configuración ya abierta los aliases se suman a los que había, así que
+conviene partir de una configuración vacía —si no, el escenario de demo termina
+guardado junto con los 8.000 de la prueba de carga.
+
 ### Qué se verificó y qué no
 
 La prueba no es que el publish termine sin error: es **descomprimir el paquete en
