@@ -20,6 +20,14 @@
     <Content Include="appsettings.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
+    <!-- El CSV de ejemplo viaja con la salida para que el paquete publicado
+         sea autocontenido: sin esto, ConfigPathResolver.Resolve() lo encuentra
+         subiendo hasta el repo y el gateway parece funcionar, pero explota en
+         cualquier maquina donde el repo no este. Link conserva la subcarpeta
+         config/, que es la ruta que espera TagsCsvPath en appsettings.json. -->
+    <Content Include="..\..\config\tags.example.csv" Link="config\tags.example.csv">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
 
   <PropertyGroup>

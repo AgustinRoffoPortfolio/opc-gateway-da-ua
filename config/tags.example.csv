@@ -1,14 +1,20 @@
 # Decimales con PUNTO, no coma: se parsean con InvariantCulture. Abrir este
 # archivo con Excel en configuracion regional espanola y guardarlo puede
 # reemplazar los puntos por comas y romper el parseo.
+#
+# La columna DA apunta a aliases que hay que importar antes en el simulador
+# (config/aliases.example.csv). Los aliases llevan guiones bajos y punto
+# inicial porque Matrikon rechaza puntos en el nombre: en OPC DA el punto es
+# el separador de jerarquia del ItemID. La columna UA si usa puntos, que son
+# los que arman el arbol que se navega desde UaExpert.
 TAG_NAME_OPC_UA;TAG_NAME_OPC_DA;DATA_TYPE;MULTIPLICADOR;OFFSET;EU;SCAN_RATE_MS;DEADBAND;ACCESS_LEVEL;DESCRIPTION;ENABLED
-PLANTA_01.MEDICION.PRESION_ENTRADA;Random.Real8;Double;1;0;bar;1000;0.1;Read;Presion de entrada a planta;True
-PLANTA_01.MEDICION.CAUDAL.TOTALIZADO;Simulacion.Grupo1.Item3;Double;0.001;0;m3;5000;0.5;Read;Caudal totalizado;True
-PLANTA_01.MEDICION.TEMPERATURA_SALIDA;Random.Real4;Double;1.8;32;F;1000;0.2;Read;Temperatura de salida en Fahrenheit;True
-PLANTA_01.ESTADO.BOMBA_01;Simulacion.Grupo1.Item1;Boolean;1;0;;500;0;Read;Estado de la bomba 01;True
-PLANTA_01.CONTADOR.CICLOS;Simulacion.Grupo1.Item4;Int32;1;0;;2000;0;Read;Contador de ciclos;True
-PLANTA_01.INFO.RECETA_ACTIVA;Simulacion.Grupo1.Item5;String;1;0;;5000;0;Read;Receta activa en ejecucion;True
-PLANTA_02.MEDICION.NIVEL_TANQUE;Random.Real8;Double;0.01;0;%;1000;0.1;Read;Nivel de tanque;True
-PLANTA_02.MEDICION.PRESION_SALIDA.INSTANTANEA;Simulacion.Grupo2.Item2;Double;1;-14.7;psi;1000;0.1;Read;Presion de salida instantanea;True
-PLANTA_02.ESTADO.VALVULA_03;Simulacion.Grupo2.Item1;Boolean;1;0;;500;0;Read;Estado de la valvula 03;True
-PLANTA_02.CONTADOR.ALARMAS_ACTIVAS;Simulacion.Grupo2.Item3;Int32;1;0;;2000;0;Read;Contador de alarmas activas;True
+PLANTA_01.MEDICION.PRESION_ENTRADA;.PLANTA_01_MEDICION_PRESION_ENTRADA;Double;1;0;bar;1000;0.1;Read;Presion de entrada a planta;True
+PLANTA_01.MEDICION.CAUDAL.TOTALIZADO;.PLANTA_01_MEDICION_CAUDAL_TOTALIZADO;Double;0.001;0;m3;5000;0.5;Read;Caudal totalizado;True
+PLANTA_01.MEDICION.TEMPERATURA_SALIDA;.PLANTA_01_MEDICION_TEMPERATURA_SALIDA;Double;1.8;32;F;1000;0.2;Read;Temperatura de salida en Fahrenheit;True
+PLANTA_01.ESTADO.BOMBA_01;.PLANTA_01_ESTADO_BOMBA_01;Boolean;1;0;;500;0;Read;Estado de la bomba 01;True
+PLANTA_01.CONTADOR.CICLOS;.PLANTA_01_CONTADOR_CICLOS;Int32;1;0;;2000;0;Read;Contador de ciclos;True
+PLANTA_01.INFO.RECETA_ACTIVA;.PLANTA_01_INFO_RECETA_ACTIVA;String;1;0;;5000;0;Read;Receta activa en ejecucion;True
+PLANTA_02.MEDICION.NIVEL_TANQUE;.PLANTA_02_MEDICION_NIVEL_TANQUE;Double;0.01;0;%;1000;0.1;Read;Nivel de tanque;True
+PLANTA_02.MEDICION.PRESION_SALIDA.INSTANTANEA;.PLANTA_02_MEDICION_PRESION_SALIDA_INSTANTANEA;Double;1;-14.7;psi;1000;0.1;Read;Presion de salida instantanea;True
+PLANTA_02.ESTADO.VALVULA_03;.PLANTA_02_ESTADO_VALVULA_03;Boolean;1;0;;500;0;Read;Estado de la valvula 03;True
+PLANTA_02.CONTADOR.ALARMAS_ACTIVAS;.PLANTA_02_CONTADOR_ALARMAS_ACTIVAS;Int32;1;0;;2000;0;Read;Contador de alarmas activas;True
