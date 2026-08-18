@@ -206,10 +206,31 @@ habilitaron después, para esta verificación, y quedaron habilitados en el
 código. Mantener contadores por sesión y por suscripción tiene costo, así que
 una corrida futura no es directamente comparable contra esta tabla.
 
-**Desfasaje del SourceTimestamp (~7 min).** El `SourceTimestamp` que llega a
-UaExpert está desfasado unos 7 minutos y 10 segundos respecto del
-`ServerTimestamp`. El valor avanza correctamente ciclo a ciclo, así que no es un
-timestamp congelado. La hipótesis previa era que el desfasaje viene del
-simulador o del cliente UA, pero eso no cierra del todo: el cliente OPC DA de
-Matrikon, leyendo el mismo item del mismo servidor, muestra hora actual. Queda
-como pendiente con hipótesis abiertas, no como resuelto.
+Ya hay evidencia de que la diferencia no es despreciable: una corrida posterior
+del mismo escalón de 8.000, durante la Fase 5 y con la página de diagnóstico
+sirviendo además de los `ServerDiagnostics` habilitados, midió **148,7 MB** contra
+los 72,7 MB de esta tabla. No alcanza para atribuirle la diferencia a una causa
+—son dos cambios a la vez y una sola medición—, pero sí para no citar los 72,7 MB
+como el consumo del gateway tal como está hoy. La corrida 2 debería medir las dos
+configuraciones en la misma sesión.
+
+**Desfasaje del SourceTimestamp (~7 min) — resuelto, es del simulador.** Durante
+esta corrida el `SourceTimestamp` que llegaba a UaExpert estaba desfasado unos 7
+minutos y 10 segundos respecto del `ServerTimestamp`. El valor avanzaba
+correctamente ciclo a ciclo, así que no era un timestamp congelado, y la
+hipótesis de que viniera del simulador no cerraba: el cliente OPC DA de Matrikon,
+leyendo el mismo item del mismo servidor, mostraba hora actual.
+
+Eso último era justamente la pista, leída al revés. Durante la Fase 5 se observó
+que **con el configurador de MatrikonOPC abierto el desfase desaparece** y los dos
+timestamps coinciden al segundo. O sea que el simulador no refresca los timestamps
+de sus items cuando el gateway es su único cliente leyendo por `Cache`; basta con
+que se conecte cualquier otro cliente DA para que se normalicen. Por eso el
+cliente de Matrikon mostraba hora actual: al abrirlo para comparar, se alteraba lo
+que se estaba midiendo.
+
+Es una anomalía del simulador y no del gateway. El detalle y cómo reproducirla
+están en [operacion.md](operacion.md). Tiene una consecuencia práctica para grabar
+material de demo: conviene dejar el configurador **cerrado**, porque el desfase es
+exactamente lo que hace visible que `SourceTimestamp` y `ServerTimestamp` son dos
+relojes distintos.
