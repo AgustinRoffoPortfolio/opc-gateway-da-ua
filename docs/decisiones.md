@@ -431,3 +431,39 @@ esto tiene que soportar.
 
 `Resolve()` no se tocó: ya arranca desde la carpeta del ejecutable, así que con
 el CSV en `config/` al lado del `.exe` lo encuentra en la primera iteración.
+
+## 22. Los ItemIDs del CSV de ejemplo nunca existieron
+
+El CSV de ejemplo mapeaba siete de sus diez tags contra ItemIDs con forma
+`Simulacion.Grupo1.Item3`. Al empaquetar el gateway apareció que el servidor DA
+los rechazaba —siete de diez tags fuera de servicio, semáforo ámbar— y la primera
+hipótesis fue la anomalía ya documentada en `operacion.md`: el simulador
+relanzado por COM vuelve con la configuración por defecto y pierde los aliases
+importados.
+
+No era eso. **Esos ItemIDs nunca existieron.** Matrikon rechaza puntos en el
+nombre de un alias, porque en OPC DA el punto es el separador de jerarquía del
+ItemID y un alias con puntos sería ambiguo para el servidor. Está escrito en
+`pruebas-carga.md` desde la Fase 6, donde los 8.000 aliases se generan con
+guiones bajos y punto inicial justamente por eso. El CSV de ejemplo es anterior y
+nunca se alineó: sus nombres describían cómo se querían llamar los items, no cómo
+podían llamarse.
+
+Pasó desapercibido porque los tres tags que sí funcionaban apuntaban a items
+nativos (`Random.Real8`, `Random.Real4`), que existen siempre. Con tres de diez
+andando, la demo se veía viva y el resto se leía como un problema de
+configuración del simulador.
+
+La corrección es que ahora hay **dos archivos y no uno**: `config/tags.example.csv`
+mapea UA↔DA para el gateway, y `config/aliases.example.csv` crea esos ItemIDs del
+lado del simulador. Los diez tags pasan por alias, incluidos los tres que
+funcionaban directo: mantener dos convenciones conviviendo en un archivo que se
+lee para aprender a configurar confunde más de lo que ahorra.
+
+**Lo que esto expone sobre el método.** El error sobrevivió desde la Fase 2 porque
+la verificación de "listo" fue mirar que los valores cambiaran en UaExpert, y eso
+lo cumplían los tres tags nativos. Un CSV de ejemplo es configuración, y la
+configuración de ejemplo también se verifica: que un tag esté declarado no prueba
+que exista del otro lado. El gateway, mientras tanto, se portó bien todo el
+tiempo —rechazó los items, lo reportó por tag y siguió sirviendo el resto—, que
+es exactamente lo que la Fase 3 pedía.

@@ -147,3 +147,74 @@ y la carga funciona. Es un bug del configurador, no del gateway.
 Al cargar una configuración con el gateway conectado, Matrikon avisa que los
 items OPC se invalidan. Es el mismo escenario que en planta produce una recarga de
 configuración del servidor DA, y el gateway lo resuelve con el reintento de altas.
+
+## Empaquetar el gateway para distribuir
+
+El paquete permite correr el gateway en una máquina sin Visual Studio, sin el
+repo y sin .NET instalado. Es una carpeta comprimida, no un instalador: se
+descomprime y se ejecuta `Gateway.Host.exe`.
+
+### Publicar
+
+```powershell
+dotnet publish .\src\Gateway.Host -c Release -r win-x86 --self-contained true -o .\publish
+```
+
+`win-x86` no es opcional: el driver DA es COM de 32 bits y el ejecutable manda
+sobre todas las bibliotecas que carga.
+
+**Self-contained** porque el runtime de .NET viaja adentro. La alternativa exige
+que la máquina destino tenga instalado el runtime **x86** específicamente —el x64
+no sirve—, que es el tipo de requisito donde alguien que quería probar el gateway
+diez minutos abandona. Precio: ~110 MB de carpeta.
+
+**Sin `PublishTrimmed`.** El stack de la OPC Foundation y el interop COM resuelven
+tipos por reflection; el trimmer los borra sin avisar y la falla aparece en
+runtime, no al compilar.
+
+`dotnet publish -o` no limpia el destino: sobreescribe lo que coincide y deja lo
+demás. Un publish anterior con otra configuración sobrevive mezclado, y peor,
+puede hacer que el paquete arranque en la máquina de desarrollo por un archivo
+que en la máquina destino no va a estar. Borrar `publish/` antes de cada corrida.
+
+### Armar el paquete
+
+Sobre la carpeta publicada:
+
+- **Borrar `pki/`.** Los certificados se generan solos en el primer arranque.
+  Mandar los propios arrastra el nombre de host de la máquina de desarrollo.
+- **Borrar los `.pdb`.** Además de ser ruido, sus stack traces exponen las rutas
+  absolutas del disco de desarrollo.
+- **Agregar** el `.opcsim.xml` del escenario de demo, el CSV de aliases y un
+  `LEEME.txt` con requisitos, puesta en marcha y qué se debería ver.
+
+### Qué se verificó y qué no
+
+La prueba no es que el publish termine sin error: es **descomprimir el paquete en
+una carpeta cualquiera fuera del repo y que arranque**. Ese recorrido está
+verificado, y fue el que expuso el problema de rutas de la decisión 21 — el
+gateway resolvía la PKI subiendo hasta el archivo de solución, que en una máquina
+sin el repo no existe.
+
+Lo que **no** está verificado en limpio son los dos primeros pasos del LEEME:
+instalar el simulador y cargar el escenario en un Windows donde Matrikon nunca
+estuvo. La máquina de desarrollo ya lo tenía instalado y con los aliases
+importados, así que esa parte del procedimiento está escrita pero no probada.
+
+### Firewall
+
+Al primer arranque Windows pide permiso de red. **Se puede cancelar**: el
+servidor UA y la página de diagnóstico escuchan en `localhost`, y ese tráfico no
+lo filtra el firewall. Conviene decirlo en el LEEME para que no se lea como que
+algo falló.
+
+Cancelar no es neutro: Windows crea una regla de bloqueo explícita, igual que
+aceptar crea una de permiso. Se listan y se borran así (el borrado necesita
+PowerShell como administrador):
+
+```powershell
+Get-NetFirewallApplicationFilter |
+  Where-Object { $_.Program -like "*Gateway.Host.exe*" } |
+  Get-NetFirewallRule |
+  Select-Object DisplayName, Direction, Action, Profile
+```
