@@ -22,6 +22,7 @@ aparte:
 | [configuracion-tags.md](configuracion-tags.md) | El CSV campo por campo y la política de carga parcial |
 | [calidad-da-ua.md](calidad-da-ua.md) | La tabla de mapeo de calidad DA a StatusCode UA |
 | [verificacion.md](verificacion.md) | Qué se comprobó con los propios ojos, fase por fase |
+| [pruebas-carga.md](pruebas-carga.md) | Las mediciones de volumen, con sus límites |
 | [operacion.md](operacion.md) | Cómo se levanta y qué mirar si falla |
 | [glosario.md](glosario.md) | La jerga del dominio |
 
@@ -38,13 +39,13 @@ aparte:
    │  └───────────────┘         │  │  OpcDaTagSource    │  │  │
    │                            │  │  (driver DA)       │  │  │
    │                            │  └─────────┬──────────┘  │  │
-   │                            │            │             │  │
+   │                            │            │ TagSample   │  │
    │                            │  ┌─────────▼──────────┐  │  │
    │                            │  │   TagCache         │  │  │
    │                            │  │   (frontera entre  │  │  │
    │                            │  │    los dos mundos) │  │  │
    │                            │  └─────────┬──────────┘  │  │
-   │                            │            │             │  │
+   │                            │            │ TagState    │  │
    │                            │  ┌─────────▼──────────┐  │  │
    │                            │  │  NodeManager       │  │  │
    │                            │  │  + Address Space   │  │  │
@@ -53,6 +54,10 @@ aparte:
    │                            │            │             │  │
    │                            │  ┌─────────▼──────────┐  │  │
    │                            │  │  OPC UA Server     │  │  │
+   │                            │  └────────────────────┘  │  │
+   │                            │  ┌────────────────────┐  │  │
+   │                            │  │  Kestrel — página  │  │  │
+   │                            │  │  de diagnóstico    │  │  │
    │                            │  └────────────────────┘  │  │
    │                            └───────────┬──────────────┘  │
    └────────────────────────────────────────┼─────────────────┘
@@ -72,6 +77,12 @@ Si el gateway leyera del DA en respuesta a cada request UA, diez clientes
 preguntando lo mismo serían diez lecturas contra el servidor legado. La cache
 convierte eso en una sola lectura periódica, independiente de cuántos clientes
 haya del otro lado.
+
+Esa frontera también define qué tipo de dato viaja de cada lado. Del driver a la
+cache viaja un `TagSample`: lo que se acaba de leer, o nada. De la cache al node
+manager viaja un `TagState`: el último estado conocido, que puede ser viejo y que
+lleva su propia antigüedad encima. Son dos preguntas distintas y por eso son dos
+tipos distintos —el desarrollo de ese razonamiento está en la decisión 7.
 
 ## Estructura de proyectos
 
@@ -99,15 +110,18 @@ compilador en vez de la disciplina personal:
 
 Todo lo configurable vive fuera del código:
 
-- **`appsettings.json`** — endpoint, namespace, intervalo de publicación, ruta de
-  la PKI y ruta del CSV de tags.
+- **`appsettings.json`** — endpoint OPC UA, namespace, intervalo de publicación,
+  ruta de la PKI, ruta del CSV de tags y dirección de escucha de la página de
+  diagnóstico.
 - **`config/tags.csv`** — la definición de los tags. El formato completo, la
   política de carga parcial y las decisiones detrás de cada campo están en
   [configuracion-tags.md](configuracion-tags.md).
 
-Al repositorio va únicamente `config/tags.example.csv`, con nombres de tags,
-dispositivos y servidores **inventados**. El archivo real queda fuera del control
-de versiones.
+Al repositorio van dos archivos de ejemplo, con nombres de tags, dispositivos y
+servidores **inventados**: `config/tags.example.csv`, que mapea UA↔DA para el
+gateway, y `config/aliases.example.csv`, que crea del lado del simulador los
+ItemID que ese mapeo espera encontrar. Los archivos reales quedan fuera del
+control de versiones.
 
 Dos reglas de formato que no son negociables:
 
@@ -128,6 +142,25 @@ Es deliberado: mantener un core compartido vía paquetes o submódulos es
 sobre-ingeniería para esta etapa. Si algo mejora acá y sirve allá, se porta a
 mano y se decide caso por caso.
 
-Lo que el port confirmó: la abstracción de la fuente de valores estaba bien
-puesta. Apareció un protocolo que no estaba previsto cuando se diseñó, y entra
-como una implementación más, sin tocar el node manager.
+Lo que el port dejó claro es que las dos abstracciones heredadas no corrieron la
+misma suerte, y la diferencia es el resultado más interesante del proyecto.
+
+**La del node manager sobrevivió intacta.** Apareció un protocolo que no estaba
+previsto cuando se diseñó —COM, de los años noventa, con un modelo de calidad
+propio— y el node manager no se tocó. Sigue hablando con una cache y sigue sin
+saber quién la llena.
+
+**La de la interfaz no sobrevivió.** `ITagValueSource` devolvía un valor y dejaba
+que la calidad la decidiera el node manager, lo cual alcanzaba para Modbus, donde
+la calidad es binaria: contestó o no contestó. Con OPC DA hay que transportar
+valor, calidad y timestamp de origen, así que el plan era ensanchar la firma. Al
+implementarlo apareció que con una cache en el medio no hay una pregunta más
+grande sino dos preguntas distintas, y la interfaz común se partió en dos tipos de
+dato (`TagSample` y `TagState`).
+
+O sea que la abstracción correcta resultó ser el tipo y no la interfaz. Vale la
+pena decirlo así y no como si todo hubiera estado bien puesto desde el principio:
+lo que se sostuvo fue la decisión de que el node manager no supiera de protocolos,
+y lo que se cayó fue suponer que un solo contrato podía servir a los dos lados de
+una cache. Las decisiones 1 y 7 conservan el razonamiento en los dos momentos, la
+primera marcada como superada por la segunda.
