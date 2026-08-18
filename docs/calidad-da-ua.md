@@ -113,6 +113,48 @@ severidad tiene que ver lo mismo acá que en cualquier otro gateway conforme.
 explícitamente. Un servidor DA que use ese espacio para diagnóstico propio pierde
 esa información al pasar por el gateway.
 
+## Las calidades que no vienen del DA
+
+Todo lo anterior describe la traducción de una calidad que **llegó** del servidor
+DA. Pero hay situaciones en las que no hubo lectura de la cual traducir nada, y
+el gateway igual tiene que publicar algo: un nodo UA no puede quedarse sin
+`StatusCode`. Esas calidades las fabrica el gateway (`TagQuality` en
+`Gateway.Core`) y después pasan por el mismo `QualityMapper` que las reales.
+
+| Situación | `TagQuality` | StatusCode UA |
+|---|---|---|
+| El servidor DA rechazó el ItemID al darlo de alta | `ItemRejected` | `BadConfigurationError` |
+| Se pidió un tag que la cache no conoce | `UnknownTag` | `BadConfigurationError` |
+| Llegó un valor pero no convierte al `DATA_TYPE` del CSV | `ConversionError` | `BadConfigurationError` |
+
+**Las tres caen en el mismo código, y está bien que así sea de cara al cliente
+UA:** la norma no ofrece nada más fino, y las tres son efectivamente errores de
+configuración —el CSV declara algo que el otro lado o el dato no honran—, no
+fallas de comunicación. Un cliente que las viera como `BadNotConnected` saldría a
+revisar la red por un ItemID mal escrito.
+
+**Pero es un tercer colapso, y a diferencia de los dos anteriores este no lo
+impone la especificación: lo elegimos nosotros.** La consecuencia práctica es que
+el `StatusCode` no alcanza para diagnosticar, porque las tres se arreglan en
+lugares distintos: la columna `TAG_NAME_OPC_DA` del CSV, un tag que no debería
+estar pidiéndose, y la columna `DATA_TYPE`. Por eso la distinción tiene que
+sobrevivir del lado del gateway aunque se pierda del lado UA.
+
+Hoy sobrevive parcialmente: los contadores y la heurística de diagnóstico (Fase 5)
+no miran el substatus sino si el tag alguna vez respondió, que es lo que separa
+"el ItemID no existe" de "el servidor dejó de contestar". Lo que todavía no
+distingue es la tabla de la página de diagnóstico, que muestra el `StatusCode` y
+por lo tanto exhibe los tres casos como `BadConfigurationError`. Queda anotado
+como deuda: la fila debería mostrar el `TagQuality` nominal, no su traducción.
+
+### Una colisión de vocabulario en los logs
+
+Cuando el servidor DA rechaza un ItemID al darlo de alta, el log dice que el item
+queda *"fuera de servicio"*. Es desafortunado: en el vocabulario OPC DA
+`Bad_OutOfService` significa otra cosa —el item existe pero está deshabilitado— y
+tiene su propio substatus, que no es el que se aplica acá. Son dos caminos
+distintos con nombres que se pisan. El texto del log debería decir "rechazado".
+
 ## Qué pasa con la transformación de unidades
 
 La transformación es `Valor_UA = Valor_DA * MULTIPLICADOR + OFFSET`.

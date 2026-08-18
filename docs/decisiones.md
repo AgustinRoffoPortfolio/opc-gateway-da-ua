@@ -262,3 +262,144 @@ respuesta del servidor DA sino un estado que fabrica el gateway; un `Bad` legít
 que sí venga del DA (falla de dispositivo, fuera de servicio) se publica como
 siempre. La cache es la única pieza que puede aplicar esta regla, porque es la
 única que conoce el estado anterior.
+
+---
+
+## 15. Una sola foto alimenta los nodos UA y la página
+
+El ciclo de publicación arma un `GatewaySnapshot` por vuelta y lo deposita en un
+`SnapshotHolder`. Los nodos de diagnóstico y el endpoint HTTP leen **ese mismo
+objeto**; ninguno arma el suyo.
+
+El argumento de costo es el evidente —`Build` recorre la cache entera, así que un
+F5 sobre 8.000 tags costaría un recorrido completo y diez clientes costarían
+diez—, pero el que decide es el de correctitud: si cada vista armara su propia
+foto, las dos discreparían justo cuando hay un problema y alguien las está
+comparando. Un operador que ve 12 tags caídos en la página y 14 en el cliente UA
+deja de creerle a las dos.
+
+No hay lock porque el snapshot es inmutable: el lector ve la foto vieja entera o
+la nueva entera, nunca una mezcla. La referencia es `volatile`, y no por
+atomicidad —una referencia en x86 ya lo es— sino por visibilidad entre hilos.
+
+El costo aceptado es que la página muestra datos de hasta un ciclo de antigüedad.
+Se hace visible en la vista en vez de disimularlo: el encabezado muestra la hora
+de la foto y los segundos transcurridos desde el último ciclo.
+
+## 16. La tabla de tags no sale del snapshot
+
+El endpoint de la tabla es el único que **no** lee la foto guardada: consulta la
+cache en el momento, por la misma puerta que usa el node manager.
+
+No es una inconsistencia con la decisión 15, es su límite. El snapshot contiene
+agregados —cuántos tags en cada estado—, no la lista de tags, y no podría
+contenerla: la tabla se filtra por búsqueda y por "solo degradados", parámetros
+que el ciclo de publicación no conoce cuando arma la foto. Guardar todas las
+listas posibles para todas las combinaciones de filtros sería absurdo.
+
+La consulta vive en `Gateway.Core` y no en la capa web porque decidir qué cuenta
+como degradado es la misma regla que aplica el snapshot; escrita en dos lugares
+terminaría contradiciéndose, que es exactamente lo que la decisión 15 evita.
+
+El valor se expone como **texto ya formateado en cultura invariante**, no como
+número: según el CSV un tag puede ser `Double`, `Boolean` o `String`, y
+serializarlo crudo daría un campo JSON que cambia de tipo según la fila. El formato es `"R"` y no `"G17"` — los dos hacen round-trip, pero `G17` fuerza 17
+dígitos y mostraba `29973.389843749999` donde el valor real es `29973.38984375`.
+
+## 17. Un tag mudo no es lo mismo que un tag con mala calidad
+
+El diagnóstico se apoya en un contador de tags **mudos**, y mudo significa que no
+se está refrescando, no que la calidad sea mala. Son cosas distintas: un tag que
+llega `Uncertain` porque el sensor está fuera de rango está contestando
+perfectamente, y contarlo como mudo diagnosticaría una caída donde solo hay ruido
+de proceso.
+
+Cuentan como mudos exactamente dos casos: los `Bad` —rechazado, no conectado, no
+convierte— y el `UncertainLastUsableValue` que la propia cache fabrica por
+antigüedad. Los `BadWaitingForInitialData` quedan afuera y en su propio contador,
+porque al arrancar **todos** los tags están en ese estado y contarlos dispararía
+un diagnóstico de falla en cada inicio.
+
+Los mudos se parten después en dos buckets: los que nunca entregaron un dato y
+los que entregaron antes y dejaron de hacerlo. Esa distinción es la que separa
+"el ItemID no existe del otro lado" de "el servidor perdió sus items", que se
+arreglan en lugares distintos.
+
+El discriminante es barato y no requiere un campo nuevo: `ScaledValue` solo se
+puebla con una muestra utilizable y ningún camino lo vuelve a `null`, así que un
+`ScaledValue` no nulo significa que ese ItemID contestó alguna vez en la vida del
+proceso. Eso es todo.
+
+## 18. El diagnóstico es una opinión, y se trata como tal
+
+Los contadores son mediciones; el `Diagnosis` que se deriva de ellos es una
+heurística. Esa diferencia se sostiene en tres lugares:
+
+- **Nunca se publica como nodo UA.** El address space es un contrato con los
+  clientes; una opinión del gateway no va ahí. Los contadores sí se publican.
+- **En la página se muestra siempre junto a los números que lo generaron.** El
+  operador puede no estar de acuerdo con la conclusión y sacar la suya.
+- **Cuando no hay una causa dominante, el gateway no elige.** Con los dos buckets
+  parejos el resultado es `Indeterminate`, que dice "están pasando dos cosas a la
+  vez" en vez de inventar una.
+
+Los umbrales son 5% para no afirmar una causa global —dos tags mal tipeados en un
+CSV de 8.000 no son un diagnóstico— y 90% para atribuirle la causa a un bucket.
+No son magia ni están calibrados contra nada: son la formalización de "una amplia
+mayoría", y están en constantes con nombre para que se discutan como lo que son.
+
+El orden de evaluación importa y es el que se lee en `Diagnose`: primero el
+vínculo, después la proporción. No tiene sentido preguntarse por el CSV cuando no
+hay con quien hablar.
+
+**El límite honesto, que se muestra en la propia página:** `LikelyCsvMismatch` no
+puede distinguir entre "el ItemID está mal escrito en el CSV" y "el servidor DA
+no tiene su configuración cargada". Desde adentro del gateway las dos causas son
+indistinguibles si el tag nunca alcanzó a contestar durante la vida del proceso.
+No es un bug ni algo a mejorar: es un límite de lo que se puede saber desde acá,
+y por eso la vista nombra las dos causas en vez de una.
+
+## 19. Los contadores del vínculo viven con la política de reconexión
+
+El ciclo de adquisición dejó de ser un bucle suelto en el arranque y pasó a
+`DaAcquisitionService`, que además de conectar, leer y volcar en la cache lleva
+la cuenta de ciclos, fallos, conexiones y desconexiones.
+
+Los contadores podrían haber vivido en `OpcDaTagSource`, que es quien toca COM.
+No van ahí porque **el driver no decide cuándo reintentar ni cuánto esperar**: esa
+política es de esta clase (decisión 8, el driver no tiene reloj propio). Contar
+desde el driver dejaría afuera justo la mitad que importa para el diagnóstico —
+cuántas veces se reconectó, cuánto lleva caído — porque el driver ni se entera de
+que lo recrearon.
+
+Los campos mutables se escriben desde el hilo DA y se leen desde el hilo que arma
+el snapshot. Los `long` van con `Interlocked` y el resto `volatile`; los
+`DateTime` se guardan como ticks porque `volatile` no admite structs de 8 bytes y
+en un proceso x86 se pueden leer a medio escribir. El máximo usa
+compare-and-swap: entre leer y escribir, otro hilo podría haber subido el valor y
+lo estaríamos pisando.
+
+Las duraciones se acumulan en **microsegundos** y no en milisegundos. Con 8.000
+tags el ciclo ronda las decenas de ms, pero con diez tags da menos de 1 ms y un
+promedio entero quedaría clavado en cero — que es un número que parece una
+medición y no lo es.
+
+## 20. Un vínculo vivo no prueba que el gateway esté leyendo
+
+`LinkState` tiene un cuarto estado además de conectado, desconectado y
+reconectando: `Stalled`. Es el caso del servidor DA colgado sin morir — COM no
+falla, la conexión sigue abierta, la llamada simplemente no vuelve.
+
+Sin ese estado la página mostraría "Conectado" con el hilo de adquisición
+bloqueado, que es la peor mentira posible en un diagnóstico: dice que todo está
+bien exactamente cuando nada lo está, y manda a buscar el problema a otro lado.
+
+Se detecta comparando contra el instante en que arrancó el ciclo en curso, no
+contra el último ciclo exitoso. El umbral es un múltiplo del intervalo
+configurado y no un número fijo: con `UpdateRate` de 100 ms un segundo sin volver
+ya es anormal, con 5000 ms es lo esperable.
+
+**Lo que esto no hace: destrabar la llamada.** `_group.Read()` es síncrona y no
+tiene timeout, así que `Stalled` reporta el cuelgue pero no lo cura. Un timeout
+sobre COM sigue siendo deuda. La decisión acá es más modesta y vale igual: no
+afirmar una salud que no se sabe.

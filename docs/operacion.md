@@ -57,6 +57,23 @@ items sin un cliente que lo mantenga despierto, y una lectura por `Cache` desde
 el gateway solo no alcanza. El reporte original de que "Explorer mostraba hora
 correcta" se explica solo: la mostraba **porque su propia presencia la producía**.
 
+**Observación de Fase 5.** El fenómeno reapareció al revés y sin buscarlo, lo que
+vale como confirmación independiente: durante la corrida de 8.000 tags el
+configurador quedó abierto con el escenario cargado, y la página de diagnóstico
+mostró `SourceTimestamp` y `LastUpdateUtc` idénticos al segundo, sin desfase
+alguno. En la corrida anterior de la misma sesión, con la configuración chica y
+sin el configurador abierto, la diferencia era de ~430 s. Es la misma causa vista
+desde el otro lado: no hizo falta agregar un item en Explorer — alcanzó con que
+hubiera un cliente DA presente.
+
+**Cómo reproducir la demo sin confundirse.** Según esté o no abierto el
+configurador de Matrikon, la página de diagnóstico va a mostrar los dos
+timestamps juntos o separados por siete minutos. Las dos cosas son correctas y
+ninguna es un bug del gateway. Para grabar material donde se vea que el
+`SourceTimestamp` **no** se pisa con la hora de lectura, conviene dejar el
+configurador cerrado: el desfase es justamente lo que hace visible que son dos
+relojes distintos.
+
 **Resolución: no se corrige, se documenta.** Es comportamiento del simulador, no
 del gateway. La evidencia medida en el borde del driver muestra que el
 `SourceTimestamp` se transporta fiel; corregirlo del lado del gateway implicaría
