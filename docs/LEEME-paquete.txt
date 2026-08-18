@@ -1,0 +1,103 @@
+GATEWAY OPC DA -> UA
+Prueba de concepto. Expone un servidor OPC DA existente detras de un
+servidor OPC UA, sin tocar el servidor legado.
+
+Lee por COM local (sin DCOM), cachea, y publica por UA preservando valor,
+calidad y timestamp de origen.
+
+
+REQUISITOS
+- Windows. El ejecutable es x86: el driver DA es COM de 32 bits.
+- No hace falta instalar .NET: el runtime viaja adentro del paquete.
+- Un servidor OPC DA. Si no hay uno a mano, va incluido el simulador de
+  Matrikon (MatrikonOPCSimulation.exe). Instalarlo tambien deja puestos
+  los OPC Core Components.
+
+  Descarga oficial (pide registrarse):
+  https://www.matrikonopc.com/downloads/178/index.aspx
+  Gratuito para uso no productivo y redistribuible segun su propia
+  licencia, por eso viene incluido en este paquete.
+
+  El instalador tambien trae MatrikonOPC Explorer, un cliente OPC DA que
+  sirve para verificar del lado DA de forma independiente al gateway.
+
+PUESTA EN MARCHA
+
+1. Instalar MatrikonOPCSimulation.exe (siguiente-siguiente).
+
+2. Abrir "MatrikonOPC Server for Simulation and Testing" y cargar el
+   escenario de prueba: File -> Open -> demo-10.opcsim.xml
+   Son 10 alias con nombres de planta apuntando a items nativos del
+   simulador. El mapeo esta en config\aliases.example.csv.
+
+3. Ejecutar Gateway.Host.exe
+
+   Windows puede pedir permiso de firewall. Se puede CANCELAR sin
+   problema: todo escucha en localhost.
+
+4. Abrir http://localhost:8080
+
+
+QUE SE DEBERIA VER
+
+En consola:
+    Tags cargados: 10 validos, 0 con error
+    Servidor OPC UA escuchando en opc.tcp://localhost:4840/GatewayDaUa
+    Driver DA conectado a Matrikon.OPC.Simulation.1, leyendo cada 1000 ms
+
+En la pagina: semaforo verde, 10 tags en GOOD, y contadores de ciclo,
+fallos de lectura y latencia. Dos vistas, Operador y Detalle.
+
+Con UaExpert, conectando a opc.tcp://localhost:4840/GatewayDaUa se navega
+el arbol PLANTA_01 / PLANTA_02 derivado del CSV.
+
+
+LO QUE CONVIENE MIRAR
+
+- El SourceTimestamp de cada nodo UA es el que vino del DA, no la hora de
+  lectura del gateway. El ServerTimestamp si lo pone el gateway. Se
+  distinguen a proposito: un historiador aguas abajo que guarde la hora de
+  lectura corrompe la serie y el problema aparece meses despues.
+
+- La calidad DA se traduce a StatusCode UA por tabla explicita, no por
+  ifs. Bad_NotConnected -> BadCommunicationError, Bad_OutOfService ->
+  BadOutOfService, Bad_LastKnownValue -> UncertainLastUsableValue.
+
+- Cerrar el servidor DA (matar OPCSim.exe desde el Administrador de
+  tareas) con el gateway andando. El gateway NO se cae: marca el vinculo
+  caido, lo muestra en la pagina, y reconecta solo cuando el servidor
+  vuelve. Eso es comportamiento esperado, no un error.
+
+  Al relanzarlo, COM lo levanta con la configuracion por defecto y los
+  alias importados no estan: hay que volver a cargar demo-10.opcsim.xml.
+  Eso es del simulador, no del gateway.
+
+- Si el servidor DA no esta al arrancar, el gateway arranca igual con el
+  vinculo caido.
+
+
+CONFIGURACION
+
+appsettings.json:
+  Da.ProgId              servidor DA destino (Matrikon.OPC.Simulation.1)
+  Da.UpdateRateMs        intervalo de lectura DA
+  Ua.EndpointUrl         endpoint del servidor UA
+  Ua.TagsCsvPath         CSV de mapeo
+  Web.ListenUrl          pagina de diagnostico
+
+config\tags.example.csv: el mapeo. Separador ';', decimales con PUNTO
+(se parsean con InvariantCulture). Transformacion por tag:
+
+    Valor_UA = Valor_DA * MULTIPLICADOR + OFFSET
+
+Se aplica solo si el valor DA es numerico y la calidad es utilizable. Con
+calidad mala no se escala: se publica StatusCode no-bueno. Un valor
+escalado sobre una lectura mala parece valido, que es peor que no publicar.
+
+Un tag mal configurado queda fuera de servicio y se reporta, pero no
+impide que arranque el resto.
+
+
+ALCANCE
+Solo lectura. No historiza. Sin DCOM remoto: gateway y servidor DA en la
+misma maquina.
