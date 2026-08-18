@@ -28,11 +28,16 @@ public static class ConfigPathResolver
             $"No se encontro '{relativePath}' subiendo desde {AppContext.BaseDirectory}");
     }
 
-    /// Ubica la raiz del repo subiendo desde la carpeta del ejecutable hasta
-    /// encontrar el archivo de solucion. A diferencia de Resolve(), no exige
-    /// que el destino final exista: sirve para construir rutas absolutas a
-    /// carpetas que el proceso crea la primera vez que corre.
-    public static string ResolveRepoRoot()
+    /// Ubica la carpeta base contra la que se resuelven las rutas de datos que
+    /// el proceso crea al arrancar (por ejemplo, la PKI). A diferencia de
+    /// Resolve(), no exige que el destino final exista.
+    ///
+    /// Corriendo desde el repo devuelve la raiz del repo, para que todos los
+    /// proyectos compartan una unica carpeta de datos aunque cada uno corra
+    /// desde su propio bin/. En un paquete publicado no hay solucion arriba, y
+    /// entonces la carpeta base es la del ejecutable: el paquete es
+    /// autocontenido y no depende de nada que este por encima suyo.
+    public static string ResolveDataRoot()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
         while (dir is not null)
@@ -40,8 +45,6 @@ public static class ConfigPathResolver
             if (File.Exists(Path.Combine(dir.FullName, RepoRootMarker))) return dir.FullName;
             dir = dir.Parent;
         }
-
-        throw new FileNotFoundException(
-            $"No se encontro '{RepoRootMarker}' subiendo desde {AppContext.BaseDirectory}");
+        return AppContext.BaseDirectory;
     }
 }

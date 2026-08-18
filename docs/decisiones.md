@@ -403,3 +403,31 @@ ya es anormal, con 5000 ms es lo esperable.
 tiene timeout, así que `Stalled` reporta el cuelgue pero no lo cura. Un timeout
 sobre COM sigue siendo deuda. La decisión acá es más modesta y vale igual: no
 afirmar una salud que no se sabe.
+
+## 21. La carpeta base de datos no es la raíz del repo
+
+La decisión 6 ancló las rutas de configuración y PKI al archivo de solución,
+subiendo desde la carpeta del ejecutable. Resolvía bien el problema de entonces:
+cinco proyectos corriendo cada uno desde su propio `bin/`, contra una única
+configuración compartida, sin depender del working directory.
+
+Al empaquetar el gateway para distribuirlo apareció el límite. En una máquina sin
+el repo no hay `Gateway.slnx` en ninguna carpeta padre, así que la búsqueda subía
+hasta la raíz del disco y tiraba excepción **en el arranque** — el paquete no
+llegaba a levantar.
+
+Lo que el proceso necesita no es la raíz del repo: es la carpeta base donde viven
+`config/` y la PKI. En desarrollo las dos coinciden, y por eso la distinción no
+se veía. Corriendo desde un paquete publicado no hay nada arriba, y la carpeta
+base correcta es la del ejecutable: el paquete es autocontenido. El método pasó a
+llamarse `ResolveDataRoot()` y, cuando no encuentra el marcador, devuelve
+`AppContext.BaseDirectory` en vez de fallar.
+
+El fallback es silencioso a propósito. Podría avisar, pero el único caso en que
+oculta algo es correr desde el repo con el `.slnx` renombrado — raro, y el
+síntoma (una PKI nueva creada en `bin/`) es visible. A cambio, un paquete
+distribuido arranca sin configuración previa, que es exactamente el escenario que
+esto tiene que soportar.
+
+`Resolve()` no se tocó: ya arranca desde la carpeta del ejecutable, así que con
+el CSV en `config/` al lado del `.exe` lo encuentra en la primera iteración.

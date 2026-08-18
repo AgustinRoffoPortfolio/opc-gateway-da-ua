@@ -94,7 +94,7 @@ var application = new ApplicationInstance(telemetry)
 // y correr el .exe desde bin/ resolvieran carpetas distintas, el servidor
 // regeneraria su certificado en cada modo y romperia la confianza ya
 // establecida con los clientes.
-var pkiRoot = Path.Combine(ConfigPathResolver.ResolveRepoRoot(), options.PkiRoot);
+var pkiRoot = Path.Combine(ConfigPathResolver.ResolveDataRoot(), options.PkiRoot);
 
 // La API nueva recibe una coleccion porque un servidor puede tener varios
 // certificados (RSA, ECC) y ofrecer el que el cliente soporte. Nosotros usamos uno.
