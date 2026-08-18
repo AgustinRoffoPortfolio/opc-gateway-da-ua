@@ -121,21 +121,88 @@ servidor DA: el propio Matrikon avisa que hacerlo invalida todos los items.
 
 Tests: 46/46.
 
+## Fase 5 — diagnóstico
+
+Verificado sobre dos configuraciones deliberadamente opuestas, para ver que el
+diagnóstico distinga un gateway sano de uno enfermo y no diga siempre lo mismo.
+
+**Configuración chica, rota a propósito (10 tags, 7 con ItemID inexistente):**
+semáforo en ámbar, veredicto `LikelyCsvMismatch`, 7 de 10 tags afectados, y las
+dos causas posibles nombradas en la propia vista —el ItemID mal escrito en el CSV
+y el servidor DA sin su configuración cargada son indistinguibles desde adentro
+del gateway, así que la página no elige una. La tabla mostró las 7 filas con su
+`daName` resuelto, distinguiendo un tag que nunca respondió de uno con una hora
+real de última respuesta.
+
+**Configuración grande, sana (8.000 tags):** semáforo en verde, veredicto
+`Healthy`, 8.000 de 8.000 en `Good`, cero rechazos. El pie de la tabla acotando a
+"Mostrando 100 de 8000".
+
+- **La página sobrevive a que se caiga el DA Server**, que es el criterio duro de
+  la fase: el vínculo caído se muestra como estado, no como página rota. Los
+  endpoints JSON siguen respondiendo aunque el recurso de la vista falte.
+- **Los nodos UA de diagnóstico se publican siempre en `Good`**, incluso cuando
+  reportan una falla, por la misma razón por la que una duda no se publica como
+  `Bad`: un `DataValue` con master `Bad` no transporta valor, así que el nodo que
+  dice "el DA está caído" se vaciaría justo por decirlo. Ver decisión 23.
+
+**Observación de la corrida grande, no métrica de Fase 6.** Ciclo de adquisición:
+último 66,4 ms, promedio 76,1 ms, máximo 160,9 ms, sobre un intervalo configurado
+de 1.000 ms. O sea que el gateway no llega tarde a su propio ciclo, con holgura de
+un orden de magnitud. Memoria del proceso: 148,7 MB, lejos del techo práctico de
+~2 GB del proceso x86.
+
+Ese número de memoria **es el doble del que registra
+[pruebas-carga.md](pruebas-carga.md) para el mismo escalón** (72,7 MB, 14/08). No
+son corridas comparables: la de la Fase 5 corre con la página de diagnóstico
+sirviendo y con los `ServerDiagnostics` del stack habilitados, que el propio
+documento de carga advierte que tienen costo. Queda anotado como observación a
+resolver en la Fase 6, midiendo las dos configuraciones en la misma corrida en vez
+de comparar contra una tabla vieja.
+
+**Hallazgo lateral confirmado.** Con el configurador de MatrikonOPC abierto, el
+desfase del `SourceTimestamp` **desaparece**: los dos timestamps coinciden al
+segundo. Es la anomalía conocida del simulador vista desde el otro lado, y sin
+buscarla. Cierra el pendiente que
+[pruebas-carga.md](pruebas-carga.md) había dejado con hipótesis abiertas: el
+desfase es del simulador y no del gateway. El detalle, en
+[operacion.md](operacion.md).
+
+Tests: 54/54.
+
 ## Pendientes abiertos
 
-- **La raíz del repositorio se resuelve con el archivo de solución como ancla**,
-  y falla ruidosamente si no lo encuentra. Publicado como servicio (Fase 7), ese
-  archivo no va a existir, así que la ubicación de la PKI tendrá que definirse de
-  forma explícita. La falla ruidosa es a propósito: es preferible a que un
-  servicio arranque contra una carpeta arbitraria y regenere el certificado en
-  silencio. Ver decisión 6.
+- **El servidor DA colgado sin morir no está cubierto.** Falta un timeout sobre
+  las llamadas COM: `Read()` es síncrona y sin timeout, así que el hilo de
+  adquisición puede quedar bloqueado sin excepción. El estado `Stalled` lo
+  reporta pero no lo cura. Detalle en el escenario 5 de la Fase 4.
+- **La tabla de la página no distingue los tres `BadConfigurationError`.**
+  `ItemRejected`, `UnknownTag` y `ConversionError` se ven idénticos en la vista,
+  y se arreglan en lugares distintos: la columna `TAG_NAME_OPC_DA`, un tag que no
+  debería pedirse, y la columna `DATA_TYPE`. La fila debería mostrar el
+  `TagQuality` nominal y no su traducción a UA. Documentado como límite conocido
+  en [calidad-da-ua.md](calidad-da-ua.md).
+- **El video de la demo de Fase 2 está sin editar.** Es la pieza de mayor peso
+  demostrativo del proyecto.
+- **Las mediciones de la Fase 6 están a medio hacer.** Ver las limitaciones
+  declaradas en [pruebas-carga.md](pruebas-carga.md).
 
-- **Requisitos de arranque del cliente DA.** La librería exige que
-  `Bootstrap.Initialize()` se llame lo más arriba posible del arranque, antes de
-  construir cualquier host, y que el proceso corra en apartment **MTA** por la
-  llamada a `CoInitializeSecurity` que hace internamente. Las aplicaciones de
-  consola de .NET son MTA por defecto, pero conviene verificarlo explícitamente
-  antes de dar por bueno el primer arranque con COM.
+## Pendientes que se cerraron
+
+Se conservan porque estuvieron abiertos varias fases, y cómo se cerraron es parte
+del resultado.
+
+- **La raíz del repositorio anclada al archivo de solución.** Quedó anotado en la
+  Fase 1 que, publicado como servicio, ese archivo no iba a existir. El límite
+  apareció antes de lo previsto —al empaquetar el gateway, no en la Fase 7— y de
+  la peor forma posible: el paquete no llegaba a arrancar. La corrección fue
+  distinguir la raíz del repo de la carpeta base de datos, que en desarrollo
+  coinciden y por eso no se veían separadas. Ver decisión 21.
+- **Requisitos de arranque del cliente DA (MTA y `Bootstrap.Initialize()`).**
+  Verificado en la práctica desde la Fase 2 y sostenido en todas las corridas
+  posteriores, incluidas las de 8.000 tags y las de caída y reconexión del
+  servidor DA. La aplicación de consola es MTA por defecto y la inicialización
+  ocurre antes de construir el host.
 
 ## Sobre el método
 
@@ -169,3 +236,9 @@ mirar el sistema real es lo que encuentra los problemas, y los tests son lo que
 los localiza rápido y sin depender de reproducir una falla a mano. La deuda que
 esto dejó al descubierto era que la degradación por antigüedad no tenía ni un
 test, y se saldó en la misma sesión.
+
+La Fase 3 dejó un tercer caso, de otra clase: los ItemID del CSV de ejemplo nunca
+habían existido, y el error sobrevivió tres fases porque la verificación de
+"listo" fue ver valores cambiando en UaExpert —cosa que hacían los tres tags que
+sí apuntaban a items nativos. Un CSV de ejemplo también es configuración, y que un
+tag esté declarado no prueba que exista del otro lado. Ver decisión 22.
