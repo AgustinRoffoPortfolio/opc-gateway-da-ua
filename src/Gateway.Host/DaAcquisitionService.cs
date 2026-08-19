@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Gateway.Core;
 using Gateway.Da;
 using Serilog;
@@ -211,7 +212,11 @@ public sealed class DaAcquisitionService
         {
             var startedUtc = DateTime.UtcNow;
             Interlocked.Exchange(ref _cycleStartedTicks, startedUtc.Ticks);
-
+            // La duracion se mide con Stopwatch y no restando DateTime.UtcNow:
+            // ese reloj avanza a saltos de ~15,6 ms en Windows, asi que un ciclo
+            // corto daria 0 o 15.600 us y nada en el medio. startedUtc se sigue
+            // usando, pero para marcar CUANDO arranco el ciclo, no cuanto duro.
+            var cycleWatch = Stopwatch.StartNew();
             try
             {
                 _cache.Update(source.ReadAll());
@@ -224,7 +229,7 @@ public sealed class DaAcquisitionService
                 Interlocked.Exchange(ref _cycleStartedTicks, 0);
             }
 
-            RecordCycle(DateTime.UtcNow - startedUtc);
+            RecordCycle(cycleWatch.Elapsed);
 
             if (pending.Count > 0 && DateTime.UtcNow >= nextItemRetry)
             {
