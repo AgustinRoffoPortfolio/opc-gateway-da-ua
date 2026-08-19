@@ -71,6 +71,15 @@ var configured = new ConfiguredEndpoint(null, selected, endpointConfig);
 var counters = new long[clientCount];
 var sessions = new List<ISession>();
 
+// Latencia cache->cliente: el gateway publica en Gateway.Performance.CacheStampUtc
+// la hora en que cerro la ultima actualizacion de cache. Como los dos procesos
+// comparten el reloj de la maquina, UtcNow menos ese sello al recibir la
+// notificacion da la latencia real (espera del timer de publicacion + sampling).
+// Se suscribe un solo cliente: la latencia no depende de cuantos la midan, y
+// sumar el nodo a los N ensuciaria el conteo de notificaciones por cliente.
+var latencies = new List<double>();
+var latencyLock = new object();
+
 for (int i = 0; i < clientCount; i++)
 {
     int index = i;
@@ -105,8 +114,48 @@ for (int i = 0; i < clientCount; i++)
         item.Notification += (_, _) => Interlocked.Increment(ref counters[index]);
 
     subscription.AddItems(items);
-    subscription.ApplyChanges();
 
+    if (index == 0)
+    {
+        // Suscripcion aparte para la sonda, con publishing de 100 ms. La de los
+        // 500 tags queda en 1000 ms: es la carga que se esta midiendo y cambiarla
+        // falsearia el conteo de notificaciones. Sin esto la latencia sale
+        // inflada hasta un segundo entero por la cola de publicacion del cliente.
+        var stampSubscription = new Subscription(session.DefaultSubscription)
+        {
+            PublishingInterval = 100,
+            PublishingEnabled = true
+        };
+        session.AddSubscription(stampSubscription);
+        stampSubscription.Create();
+        // Sampling de 100 ms, mas rapido que el ciclo de publicacion del gateway
+        // (1000 ms): si el cliente muestreara igual de lento, agregaria hasta un
+        // segundo de latencia propia al numero medido.
+        var stampItem = new MonitoredItem(stampSubscription.DefaultItem)
+        {
+            DisplayName = "CacheStampUtc",
+            StartNodeId = new NodeId("Gateway.Performance.CacheStampUtc", nsIndex),
+            AttributeId = Attributes.Value,
+            SamplingInterval = 100,
+            QueueSize = 1,
+            DiscardOldest = true
+        };
+        stampItem.Notification += (item, _) =>
+        {
+            var arrivedUtc = DateTime.UtcNow;
+            foreach (var value in item.DequeueValues())
+            {
+                if (value.Value is not string text || text.Length == 0) continue;
+                if (!DateTime.TryParse(text, CultureInfo.InvariantCulture,
+                        DateTimeStyles.RoundtripKind, out var stamp)) continue;
+                lock (latencyLock) latencies.Add((arrivedUtc - stamp).TotalMilliseconds);
+            }
+        };
+        stampSubscription.AddItem(stampItem);
+        stampSubscription.ApplyChanges();
+    }
+
+    subscription.ApplyChanges();
     sessions.Add(session);
     Console.WriteLine($"Cliente {index + 1}: conectado, ns={nsIndex}, {items.Count} items suscriptos");
 }
@@ -118,6 +167,24 @@ Console.WriteLine("\n--- Notificaciones recibidas por cliente ---");
 for (int i = 0; i < clientCount; i++)
     Console.WriteLine($"Cliente {i + 1}: {counters[i]:N0}");
 Console.WriteLine($"Total: {counters.Sum():N0}");
+
+Console.WriteLine("\n--- Latencia cache->cliente (ms) ---");
+double[] samples;
+lock (latencyLock) samples = latencies.ToArray();
+if (samples.Length == 0)
+{
+    Console.WriteLine("Sin muestras: no llegaron notificaciones del nodo del sello.");
+}
+else
+{
+    Array.Sort(samples);
+    Console.WriteLine($"Muestras: {samples.Length:N0}");
+    Console.WriteLine($"Min:  {samples[0]:F1}");
+    Console.WriteLine($"Media:{samples.Average():F1}");
+    Console.WriteLine($"p50:  {samples[samples.Length / 2]:F1}");
+    Console.WriteLine($"p95:  {samples[(int)(samples.Length * 0.95)]:F1}");
+    Console.WriteLine($"Max:  {samples[^1]:F1}");
+}
 
 foreach (var s in sessions)
 {
