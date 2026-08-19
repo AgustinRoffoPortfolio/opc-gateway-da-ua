@@ -55,7 +55,13 @@ public sealed record DaLinkStatus(
     double LastCycleMs,
     double AvgCycleMs,
     double MaxCycleMs,
-    int ConfiguredIntervalMs);
+    int ConfiguredIntervalMs,
+    /// <param name="LastCacheStampUtc">
+    /// Hora del gateway al terminar la ultima actualizacion de cache. Se publica
+    /// como nodo UA para que un cliente pueda medir la latencia cache->cliente
+    /// restandola de su propio UtcNow. Null hasta el primer ciclo.
+    /// </param>
+    DateTime? LastCacheStampUtc);
 
 /// <summary>Lo que el server UA reporta sobre sus clientes. Lo llena Gateway.Ua.</summary>
 public sealed record UaServerStatus(
@@ -95,7 +101,12 @@ public sealed record GatewayPerformance(
     int ConfiguredIntervalMs,
     int ConnectedUaSessions,
     int MonitoredItems,
-    double WorkingSetMb);
+    double WorkingSetMb,
+    /// <param name="LastCacheStampUtc">
+    /// Hora del gateway al cerrar la ultima actualizacion de cache. Viaja hasta
+    /// un nodo UA para medir la latencia cache->cliente. Null hasta el primer ciclo.
+    /// </param>
+    DateTime? LastCacheStampUtc);
 
 /// <summary>
 /// Foto del gateway en un instante. Unica fuente para los nodos UA de
@@ -185,7 +196,8 @@ public sealed record GatewaySnapshot(
         var performance = new GatewayPerformance(
             link.LastCycleMs, link.AvgCycleMs, link.MaxCycleMs, link.ConfiguredIntervalMs,
             ua.ConnectedSessions, ua.MonitoredItems,
-            System.Diagnostics.Process.GetCurrentProcess().WorkingSet64 / 1024d / 1024d);
+            System.Diagnostics.Process.GetCurrentProcess().WorkingSet64 / 1024d / 1024d,
+            link.LastCacheStampUtc);
 
         return new GatewaySnapshot(now, status, counters, performance, Diagnose(link.State, counters));
     }

@@ -19,7 +19,7 @@ public class GatewaySnapshotTests
     /// Vinculo sano y sin actividad relevante, para que el diagnostico dependa
     /// solo de los contadores de tags.
     private static DaLinkStatus Link(LinkState state = LinkState.Connected) =>
-        new(state, T1, 0, null, 10, 0, 1, 0, 5.0, 5.0, 9.0, 1000);
+        new(state, T1, 0, null, 10, 0, 1, 0, 5.0, 5.0, 9.0, 1000, T1);
 
     private static UaServerStatus Ua() => new(1, 0);
 

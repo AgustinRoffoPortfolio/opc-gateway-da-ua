@@ -41,6 +41,13 @@ public sealed class DaAcquisitionService
     // Metricas de duracion del ciclo, en milisegundos.
     private long _lastCycleMicros;
     private long _totalCycleMicros;
+
+    // Sello de la ultima actualizacion de cache, para medir la latencia
+    // cache->cliente. Se publica como nodo UA y el cliente calcula UtcNow menos
+    // este valor al recibir la notificacion: como los dos procesos comparten el
+    // reloj de la maquina, esa resta da la latencia real de la mitad UA (espera
+    // del timer de publicacion + sampling del MonitoredItem).
+    private long _lastCacheStampTicks;
     private long _maxCycleMicros;
 
     public DaAcquisitionService(TagCache cache, DaOptions options)
@@ -82,7 +89,10 @@ public sealed class DaAcquisitionService
             LastCycleMs: Interlocked.Read(ref _lastCycleMicros) / 1000d,
             AvgCycleMs: cycles == 0 ? 0 : Interlocked.Read(ref _totalCycleMicros) / 1000d / cycles,
             MaxCycleMs: Interlocked.Read(ref _maxCycleMicros) / 1000d,
-            ConfiguredIntervalMs: _options.UpdateRateMs);
+            ConfiguredIntervalMs: _options.UpdateRateMs,
+            LastCacheStampUtc: Interlocked.Read(ref _lastCacheStampTicks) is var stamp && stamp == 0
+                ? null
+                : new DateTime(stamp, DateTimeKind.Utc));
     }
 
     /// <summary>
@@ -230,6 +240,8 @@ public sealed class DaAcquisitionService
             }
 
             RecordCycle(cycleWatch.Elapsed);
+            // Despues de RecordCycle: recien aca la cache tiene el TagState.
+            Interlocked.Exchange(ref _lastCacheStampTicks, DateTime.UtcNow.Ticks);
 
             if (pending.Count > 0 && DateTime.UtcNow >= nextItemRetry)
             {

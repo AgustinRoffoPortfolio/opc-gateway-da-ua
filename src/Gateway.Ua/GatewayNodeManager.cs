@@ -1,3 +1,4 @@
+using System.Globalization;
 using Gateway.Core;
 using Opc.Ua;
 using Opc.Ua.Server;
@@ -138,6 +139,10 @@ public class GatewayNodeManager : CustomNodeManager2
 
         var performance = GetOrAddFolder(root, "Gateway.Performance", "Performance");
         AddDiagnosticVariable(performance, "LastCycleMs", DataTypeIds.Double);
+        // Sello del gateway al cerrar la ultima actualizacion de cache. Va como
+        // String ISO-8601 y no como DateTime para que el cliente lo parsee sin
+        // depender de como el stack UA convierta el tipo fecha.
+        AddDiagnosticVariable(performance, "CacheStampUtc", DataTypeIds.String);
         AddDiagnosticVariable(performance, "AvgCycleMs", DataTypeIds.Double);
         AddDiagnosticVariable(performance, "MaxCycleMs", DataTypeIds.Double);
         AddDiagnosticVariable(performance, "ConfiguredIntervalMs", DataTypeIds.Int32);
@@ -228,6 +233,8 @@ public class GatewayNodeManager : CustomNodeManager2
             SetDiagnostic("Performance.ConnectedUaSessions", p.ConnectedUaSessions, now);
             SetDiagnostic("Performance.MonitoredItems", p.MonitoredItems, now);
             SetDiagnostic("Performance.WorkingSetMb", Math.Round(p.WorkingSetMb, 1), now);
+            SetDiagnostic("Performance.CacheStampUtc",
+                p.LastCacheStampUtc?.ToString("O", CultureInfo.InvariantCulture) ?? "", now);
         }
     }
 
