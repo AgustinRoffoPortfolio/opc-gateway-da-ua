@@ -226,3 +226,72 @@ Get-NetFirewallApplicationFilter |
   Get-NetFirewallRule |
   Select-Object DisplayName, Direction, Action, Profile
 ```
+
+
+## Anomalía conocida: errores de certificado repetidos en consola
+
+**Síntoma.** La consola del gateway muestra, cada ~5 segundos y de forma
+indefinida, un bloque de error como este:
+
+[ERR] Could not verify security on OpenSecureChannel request.
+The receiver's certificate thumbprint is not valid.
+[80120000] (BadCertificateInvalid) 'The receiver's certificate thumbprint is not valid.'
+[ERR] ChannelId N: ForceChannelFault due to Could not verify security on OpenSecureChannel request..
+
+
+El `ChannelId` se incrementa en cada repetición. Suele venir acompañado de
+`SERVER - Service Fault Occurred. Reason=BadMessageNotAvailable`.
+
+**Qué NO significa.** No indica un problema con el certificado propio del
+gateway, ni con la PKI, ni con la configuración de seguridad. Tampoco lo
+resuelve tener `auto-aceptar` habilitado: esa opción controla si el gateway
+confía en el certificado *del cliente*, y acá el rechazo va por otro lado.
+
+**Causa.** En el mensaje `OpenSecureChannel`, el cliente incluye el thumbprint
+del certificado *del servidor* que tiene guardado de una sesión anterior —es su
+forma de decir "el receptor de este mensaje debería ser este de acá". El gateway
+compara ese thumbprint contra el certificado que está usando y, si no coincide,
+corta el canal. Es decir: **hay un cliente UA con una identidad vieja del
+servidor cacheada**, típicamente de una instalación previa o de otro servidor que
+alguna vez ocupó el mismo endpoint. El cliente reintenta solo, en loop, y el
+gateway lo rechaza correctamente cada vez.
+
+**Cómo verificarlo.** Con el gateway levantado, ver qué procesos y qué máquinas
+tienen conexiones al puerto UA:
+
+```powershell
+Get-NetTCPConnection -LocalPort 4840 -ErrorAction SilentlyContinue |
+  Select-Object State, LocalAddress, RemoteAddress, OwningProcess
+```
+
+Para ver también las conexiones que ya cerraron (estados `Time Wait`), que es
+donde suele quedar el rastro del cliente que reintenta, conviene
+[TCPView](https://learn.microsoft.com/sysinternals/downloads/tcpview) filtrando
+por `4840`: muestra proceso, dirección remota y timestamps en una sola vista.
+
+Dos cosas a mirar en esa salida:
+
+- **Si la dirección remota no es `127.0.0.1`**, el cliente está en otra máquina de
+  la red. El gateway escucha hoy en `0.0.0.0`, o sea en todas las interfaces
+  (ver Fase 7: el bind debe pasar a ser configurable).
+- **Cuántos certificados propios tiene el gateway.** Debe haber exactamente uno:
+
+```powershell
+  Get-ChildItem -Recurse .\pki\own\certs | Select-Object Name, LastWriteTime
+```
+
+  Si hay dos o más, el problema es otro: el gateway regeneró su certificado —por
+  ejemplo al correrse desde una ruta distinta, ya que la PKI es relativa al
+  directorio de trabajo— y entonces el thumbprint desactualizado lo tienen
+  todos los clientes legítimos.
+
+**Resolución.** Con un solo certificado propio, no hay nada que corregir del lado
+del gateway: está rechazando a un cliente que se identifica mal, que es el
+comportamiento esperado. Las salidas son borrar el certificado cacheado del store
+de confianza de ese cliente, o apagarlo si nadie lo usa. Las conexiones huérfanas
+se limpian solas por timeout y los errores cesan.
+
+**Pendiente.** Este ruido no debería vivir en la consola. En la Fase 5, los
+intentos de conexión rechazados pasan a ser un contador en la página de
+diagnóstico, agrupado por motivo. Un rechazo correcto es un evento contable, no
+un error.
