@@ -310,3 +310,123 @@ una fuga grosera.
 
 **~70-75 MB de Private Bytes para 8.000 tags**, independientemente de si los
 diagnósticos están habilitados. No citar Working Set como consumo del gateway.
+
+## Corrida 3 — 19/08/2026 — Múltiples clientes UA sobre los mismos tags
+
+### Objetivo
+
+Medir la afirmación central del diseño: la cache existe para que N clientes UA
+pidiendo los mismos datos no se traduzcan en N veces el trabajo contra el
+servidor DA legado. Estaba escrito en `arquitectura.md` como decisión, nunca
+medido.
+
+### Diseño del experimento
+
+Se eligió el escalón de **500 tags** y no el de 8.000, y **los mismos 500 tags en
+todos los clientes**. El motivo es aislar la variable: con 8.000 de fondo, el
+gateway estaría haciendo un trabajo pesado ajeno al experimento, y con
+subconjuntos distintos por cliente se estaría midiendo cantidad de
+MonitoredItems en lugar de cantidad de clientes. La pregunta que se quiso
+contestar es estrictamente "¿cuatro clientes preguntando exactamente lo mismo
+multiplican la carga sobre el DA?".
+
+La medición no necesitó instrumentación nueva: el contador `ReadCycles` ya
+existía en `GatewaySnapshot` y se expone en `/api/diagnostics`.
+
+### Herramienta: `tools/UaLoadClient`
+
+Proyecto de consola **fuera de la solución** (no lo compila `dotnet build` de la
+raíz), que abre N sesiones UA independientes contra el gateway, cada una con su
+suscripción a los mismos tags, y cuenta las notificaciones recibidas por sesión.
+Contar notificaciones no es decorativo: distingue un cliente que está recibiendo
+datos de uno que solo está conectado.
+
+Resuelve el índice del namespace **por URI** (`http://opc-gateway-da-ua/`) en vez
+de hardcodear `ns=2`, que se rompería apenas cambie el orden de registro en el
+servidor. Los NodeId de tag son el nombre completo del CSV
+(`GatewayNodeManager.cs:319`).
+
+Se ejecuta así:
+
+```powershell
+dotnet run --project tools\UaLoadClient -- opc.tcp://localhost:4840/GatewayDaUa 4 "ruta\tags-500.csv" 5
+```
+
+(endpoint · cantidad de clientes · CSV · minutos)
+
+### Método de medición
+
+Las dos ventanas se midieron igual: marca de `readCycles` **con timestamp** al
+inicio y al final, y se compara la **tasa** (ciclos por segundo), no el total.
+Un primer intento comparó totales y quedó sesgado porque los segundos que pasan
+entre arrancar el cliente y tomar la marca no son los mismos en cada corrida;
+comparar tasas cancela ese desfasaje.
+
+Condiciones: 500 tags, `Da:UpdateRateMs = 1000`, diagnósticos y página web
+habilitados, configurador de MatrikonOPC **abierto** (ver nota al final),
+ventanas de 5 minutos, todo en la misma sesión sin reiniciar el gateway entre
+ventanas.
+
+### Resultados
+
+| Métrica | 1 cliente | 4 clientes | Factor |
+|---|---|---|---|
+| Ciclos DA | 297 en 300,2 s | 295 en 299,0 s | — |
+| **Tasa de lectura DA** | **0,989 /s** | **0,987 /s** | **×1,00** |
+| Notificaciones UA recibidas | 110.100 | 480.268 | ×4,36 |
+| Private Bytes (media) | 57,1 MB | 57,2 MB | ×1,00 |
+| Working Set (media) | 64,0 MB | 65,2 MB | ×1,02 |
+| Handles (media) | 668 | 671 | ×1,00 |
+
+Reparto por cliente en la ventana de 4: 110.180 / 127.760 / 121.268 / 121.060.
+Ningún cliente quedó servido de menos: cada uno recibió aproximadamente lo mismo
+que recibía el cliente solo.
+
+Las medias de memoria y handles salen de una corrida aparte de 5 minutos por
+configuración (`memoria-clientes1.csv`, `memoria-clientes4.csv`), con los
+clientes conectados durante toda la ventana de muestreo.
+
+### Lectura de los resultados
+
+**La cache hace lo que promete.** La tasa de lectura contra el DA es idéntica con
+1 y con 4 clientes: 0,2% de diferencia, dentro del ruido. El gateway lee el
+servidor legado a su propio ritmo configurado y los clientes UA se sirven de la
+cache, sin llegar nunca al DA. Es el resultado que justifica la decisión de
+diseño de `arquitectura.md`.
+
+**El costo del lado UA es real pero barato.** Las notificaciones se multiplicaron
+por 4,36 mientras la memoria del proceso no se movió (0,1 MB) y los handles
+subieron 3. Cuatro sesiones con 500 MonitoredItems cada una son 2.000 items
+monitoreados y el gateway ni se inmuta.
+
+**0,987 ciclos/s es prácticamente el 1 Hz configurado**, o sea que el trabajo por
+ciclo (leer, escalar, cachear y publicar 500 tags) es despreciable frente al
+intervalo de 1 segundo.
+
+**Estabilidad de memoria con 500 tags.** Private Bytes se mantuvo entre 57,0 y
+57,5 MB en las dos ventanas — prácticamente inmóvil, muy distinto del rango de
+65-87 MB con 8.000 tags. Refuerza la conclusión de la corrida 2: esa oscilación
+era el asentamiento del heap bajo carga alta, no memoria que el gateway soltara.
+
+### Limitaciones de esta corrida
+
+- **Cuatro clientes, no cuarenta.** Se demostró que la carga DA es independiente
+  de la cantidad de clientes en el rango probado, no dónde está el techo del
+  lado UA.
+- **Clientes en la misma máquina.** Comparten CPU con el gateway y el servidor
+  DA. No hay red de por medio.
+- **Los clientes solo escuchan.** No hacen browse, ni lecturas puntuales, ni
+  reconexiones. Es el caso de uso de suscripción sostenida.
+- **Notificaciones al 86-88% del teórico.** 110.100 recibidas contra 500 × 297 =
+  148.500 posibles. Sugiere que con el escenario de 500 no todos los tags cambian
+  en todos los ciclos, a diferencia del de 8.000 donde todos vienen de la rama
+  `Random`. No se investigó, pero es una pista para el escenario de variación
+  parcial que quedó pendiente de la corrida 1.
+
+### Nota sobre el configurador de MatrikonOPC
+
+Estas corridas —y también las de la corrida 2— se hicieron con el **configurador
+de MatrikonOPC abierto**. El configurador es un cliente DA más, así que su
+presencia normaliza los timestamps del simulador y hace desaparecer el desfasaje
+de `SourceTimestamp` documentado en la corrida 1. Para mediciones de recursos y
+de tasa de lectura no cambia nada; para grabar material de demo, hay que cerrarlo.
