@@ -430,3 +430,117 @@ de MatrikonOPC abierto**. El configurador es un cliente DA más, así que su
 presencia normaliza los timestamps del simulador y hace desaparecer el desfasaje
 de `SourceTimestamp` documentado en la corrida 1. Para mediciones de recursos y
 de tasa de lectura no cambia nada; para grabar material de demo, hay que cerrarlo.
+
+
+## Corrida 4 — 19/08/2026 — Latencias DA→cache y cache→cliente
+
+### Objetivo
+
+Cerrar el ítem 3 de la Fase 6, obligatorio para el reporte de cierre (§B9): cuánto
+tarda un dato desde que el driver lo lee hasta que un cliente UA lo recibe.
+
+Son dos tramos con naturaleza distinta y se miden con instrumentos distintos.
+
+### Tramo DA→cache: ya estaba medido
+
+El ciclo de adquisición (`DaAcquisitionService.Run`) cronometra desde antes de
+`source.ReadAll()` hasta después de `_cache.Update(...)`, que es exactamente la
+definición del tramo. Sale por `/api/diagnostics` como `lastCycleMs`, `avgCycleMs`
+y `maxCycleMs`.
+
+Lo único que se corrigió fue el instrumento: medía restando `DateTime.UtcNow`, que
+en Windows avanza a saltos de ~15,6 ms. Los microsegundos que reportaba eran
+precisión aparente — un ciclo de 6 ms solo podía dar 0 o 15.600 µs. Se pasó a
+`Stopwatch`, que usa el contador de alta resolución del procesador.
+
+### Tramo cache→cliente: la sonda
+
+Cruza dos procesos, así que un `Stopwatch` no sirve. Tampoco sirve el
+`ServerTimestamp`: lo estampa el stack UA en el momento del sampling, no cuando la
+cache se actualizó, así que restarlo desde el cliente mediría casi cero.
+
+La solución es un nodo sonda, `Gateway.Performance.CacheStampUtc`, cuyo *valor* es
+la hora del gateway sellada en el hilo DA justo después de que la cache quedó
+actualizada. Como los dos procesos comparten el reloj de la máquina, el cliente
+calcula `UtcNow − sello` al recibir la notificación y obtiene la latencia real.
+
+**Por qué no se tocó la semántica de timestamps para medir esto:** `node.Timestamp`
+sigue siendo el `SourceTimestamp` del servidor DA, que es la tesis del proyecto. La
+sonda es un nodo de diagnóstico aparte y no interfiere con los tags.
+
+El sello viaja por el camino que ya existía: `DaLinkStatus` → `GatewaySnapshot` →
+`GatewayPerformance` → nodo UA y página web. Sale como string ISO-8601 con cultura
+invariante, no como `DateTime`, para que el cliente lo parsee sin depender de cómo
+el stack convierta el tipo fecha.
+
+### La sonda necesita su propia suscripción
+
+Primer intento: la sonda compartía la suscripción de los 500 tags, con
+`PublishingInterval` de 1000 ms. Resultado inflado — media 1098 ms, rango de 551 a
+1569. Ese ancho de ~1000 ms exactos era la cola de publicación del propio cliente,
+no latencia del gateway.
+
+Con suscripción propia a 100 ms de publishing, la medición queda limpia. La
+suscripción de los 500 tags se deja en 1000 ms a propósito: es la carga que se está
+midiendo y cambiarla falsearía el conteo de notificaciones de la corrida 3.
+
+### Configuración de la corrida
+
+- 500 tags (`carga-500.opcsim.xml`), 1 cliente UA, 5 minutos.
+- `UpdateIntervalMs` (publicación UA) 1000 · `UpdateRateMs` (lectura DA) 1000.
+- Sonda: suscripción propia, publishing 100 ms, sampling 100 ms.
+- `monitoredItems: 501` — los 500 tags más la sonda, en dos suscripciones.
+- Configurador de MatrikonOPC abierto sin monitoreo activo (`Clients: 1`).
+
+### Resultados
+
+| Tramo | Métrica | Valor |
+|---|---|---|
+| DA→cache | media | 6,2 ms |
+| | máx | 24,9 ms |
+| cache→cliente | mín | 26,4 ms |
+| | media | 537,3 ms |
+| | p50 | 497,6 ms |
+| | p95 | 1025,7 ms |
+| | máx | 1111,2 ms |
+
+297 muestras de latencia. 106.345 notificaciones recibidas por el cliente.
+
+`avgCycleMs` pasó de 6,23 a 6,20 durante los 5 minutos con el cliente conectado, y
+`maxCycleMs` quedó en 24,86 (valor previo a la corrida): la carga UA no degradó el
+ciclo DA. Es evidencia adicional para la conclusión de la corrida 3.
+
+### Lectura de los resultados
+
+**La latencia cache→cliente no es costo de procesamiento, es espera de reloj.** El
+dato ya está en la cache; lo que tarda es el próximo tick del timer de publicación.
+Media 537 y mediana 498 sobre un ciclo de 1000 ms es una distribución uniforme: el
+valor puede caer en cualquier punto del ciclo. El mínimo de 26 ms es el caso donde
+el sello se escribió justo antes del tick.
+
+**El trabajo real del gateway es dos órdenes de magnitud menor que esa espera** —
+6 ms contra 537. Bajar `UpdateIntervalMs` reduce la latencia a costa de CPU: es una
+palanca de configuración, no un límite del diseño.
+
+### Limitaciones de esta corrida
+
+- **La sonda es un nodo solo.** Mide el camino de publicación pero no compite con
+  los otros 500 en la cola de notificación. Es una cota inferior, no el peor caso.
+- **No se midió con 8.000 tags.** El tramo DA→cache sí escala con la cantidad
+  (corrida 1), pero la latencia cache→cliente con carga alta queda sin medir.
+- **Un solo cliente.** No se midió si la latencia se degrada con 4 clientes.
+
+### Corrección a la nota sobre el configurador de MatrikonOPC
+
+La corrida 3 anotó que el configurador abierto normaliza los timestamps del
+simulador. Esta corrida lo pone en duda: la ventana estuvo abierta, con la
+configuración cargada, y la barra de estado marcó `Clients: 1` — o sea, el gateway
+y nadie más.
+
+La hipótesis corregida es que **lo que normaliza no es tener el configurador
+abierto, sino tener un panel que efectivamente lea items** (Quick Client, o un
+cliente DA aparte). Si se confirma, no haría falta cerrar nada para grabar la demo.
+
+**Sin verificar todavía:** no se sabe si en las corridas anteriores la barra decía
+`Clients: 1` o `Clients: 2`. Se confirma mirando el `SourceTimestamp` en la página
+de diagnóstico y viendo si está desfasado ~430 s.
