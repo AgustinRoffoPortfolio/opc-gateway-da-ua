@@ -120,8 +120,19 @@ await application.Build(
     .SetAutoAcceptUntrustedCertificates(options.AutoAcceptUntrustedCertificates)
     .CreateAsync();
 
-Log.Information("PKI en {PkiRoot} (auto-aceptar: {Auto})",
-    pkiRoot, options.AutoAcceptUntrustedCertificates);
+// El modo permisivo se avisa como Warning y no como Information a proposito:
+// un servidor que acepta cualquier certificado de cliente tiene que ser
+// incomodo de ignorar en la consola, no una linea mas entre otras nueve.
+if (options.AutoAcceptUntrustedCertificates)
+{
+    Log.Warning("MODO PERMISIVO: se acepta cualquier certificado de cliente sin validar. " +
+                "Solo para desarrollo local. PKI en {PkiRoot}", pkiRoot);
+}
+else
+{
+    Log.Information("Validacion de certificados activa. Clientes confiables en {Trusted}",
+        Path.Combine(pkiRoot, "trusted", "certs"));
+}
 
 // Habilita los nodos de diagnostico del server (ServerDiagnostics). Vienen
 // apagados por default en el stack: el address space los expone igual, pero
