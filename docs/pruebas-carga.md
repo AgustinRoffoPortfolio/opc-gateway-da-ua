@@ -544,3 +544,90 @@ cliente DA aparte). Si se confirma, no haría falta cerrar nada para grabar la d
 **Sin verificar todavía:** no se sabe si en las corridas anteriores la barra decía
 `Clients: 1` o `Clients: 2`. Se confirma mirando el `SourceTimestamp` en la página
 de diagnóstico y viendo si está desfasado ~430 s.
+
+## Corrida 5 — Soak de 2 horas (ítem 4 de la Fase 6)
+
+Última medición de la Fase 6. Objetivo: detectar una fuga lenta de handles COM
+que en ventanas de 5-10 minutos no se ve. No requirió código nuevo.
+
+### Configuración de la corrida
+- 500 tags (`carga-500.opcsim.xml`), 0 clientes UA, 120 minutos.
+- `UpdateIntervalMs` (publicación UA) 1000 · `UpdateRateMs` (lectura DA) 1000.
+- Muestreo cada 30 s con `tools/Measure-GatewayMemory.ps1` (240 muestras).
+- Configurador de MatrikonOPC abierto sin monitoreo activo (`Clients: 1`).
+- Suspensión de Windows desactivada durante la corrida (4 h con corriente alterna).
+
+### Resultados
+
+| Métrica | Base (t+1min) | Final | Mín | Máx |
+|---|---|---|---|---|
+| Private Bytes | 53,8 MB | 53,4 MB | 51,7 MB | 66,8 MB |
+| Handles | 659 | 629 | 546 | 714 |
+| Threads | 31 | 18 | 16 | 32 |
+
+Los valores de la primera muestra (66,8 MB / 658 handles / 32 threads) son
+transitorio de arranque: JIT, carga de assemblies y armado del address space. La
+base real se toma después del primer minuto.
+
+Working Set osciló entre 23,3 y 109,8 MB. **No es una métrica útil acá**: refleja
+el recorte de páginas que hace Windows, no el consumo del proceso.
+
+### Lectura de los resultados
+
+**No hay fuga de memoria.** Private Bytes se mantuvo entre 51,9 y 54,1 MB durante
+las dos horas, sin pendiente. El valor final está 0,4 MB por debajo de la base.
+
+**Los handles no son planos: hacen diente de sierra.** Suben ~3 cada 30 s y caen
+de golpe cada 13-35 minutos:
+
+| Momento | Pico | Caída | Δ |
+|---|---|---|---|
+| 22:06 | 714 | 638 | −76 |
+| 22:19 | 683 | 589 | −94 |
+| 22:46 | 696 | 546 | −150 |
+| 23:21 | 680 | 554 | −126 |
+
+Es la firma de **RCWs (Runtime Callable Wrappers) liberados por el finalizador y no
+de forma determinística**. Cada ciclo DA crea objetos COM envueltos; como no se
+llama a `Marshal.ReleaseComObject`, el handle subyacente sobrevive hasta que pasa
+el recolector de basura, que corre cuando decide y no cuando termina la lectura.
+De ahí la subida pareja y la caída abrupta sin cadencia fija.
+
+**Lo que importa es que el techo no crece.** El pico más alto de las dos horas
+(714) ocurrió a los 22 minutos, y el último tramo cerró en 629. Sobre 240 muestras
+eso es oscilación acotada, no acumulación.
+
+Threads bajaron de 31 a un régimen estable de 17-19: el ThreadPool de .NET
+recortando hilos que no se usan.
+
+### Limitaciones de esta corrida
+- **Dos horas, no ocho ni veinticuatro.** El alcance original de la Fase 6 pedía
+  soaks más largos. Se recortó deliberadamente (ver README, sección de alcance).
+  Una fuga con período mayor a 2 h no se detectaría acá.
+- **Sin clientes UA conectados.** Mide el ciclo DA y la cache en régimen, no el
+  costo sostenido de sesiones UA. Cada cliente suma handles y threads reales.
+- **500 tags, no 8.000.** No se midió si el diente de sierra escala con la cantidad
+  de items.
+- **Una sola corrida.** Los momentos de caída de handles no son reproducibles a
+  demanda; dependen del recolector.
+
+### Deuda que esta corrida confirma
+La liberación no determinística de RCWs es aceptable en una PoC, pero en producción
+se agregaría liberación explícita (`Marshal.ReleaseComObject` en `finally`) para
+bajar el techo de handles y hacerlo predecible. Se documenta como decisión
+consciente, no como omisión.
+
+### Actualización a la nota sobre el configurador de MatrikonOPC
+La verificación pendiente de la corrida 4 se hizo al inicio de esta corrida: con el
+configurador abierto sin monitoreo (`Clients: 1`), el `SourceTimestamp` mostró ~1 s
+de diferencia contra `LastUpdateUtc` en los 500 tags, y la antigüedad marcó 0,2 s.
+**El desfasaje de ~430 s no se observó.**
+
+Esto **no confirma ni descarta** la hipótesis de Quick Client. El fenómeno ya se
+comportó de forma intermitente en corridas anteriores — apareció, desapareció y
+volvió a aparecer —, así que una observación puntual no alcanza para concluir nada.
+
+**Estado: anomalía intermitente del simulador, causa no determinada, no
+reproducible a demanda.** No afecta a las mediciones ni al diseño: la degradación
+por antigüedad se calcula con `LastUpdateUtc` (reloj del gateway), justamente para
+no depender de que el timestamp de origen sea confiable.
