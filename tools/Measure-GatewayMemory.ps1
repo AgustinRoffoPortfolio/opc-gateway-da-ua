@@ -28,8 +28,9 @@ while ((Get-Date) -lt $deadline) {
         Handles      = $p.HandleCount
         Threads      = $p.Threads.Count
     }
-    $samples += $s
-    Write-Host "$($s.TimestampUtc) | WS $($s.WorkingSetMB) MB | handles $($s.Handles) | threads $($s.Threads)"
+        $samples += $s
+    $s | Export-Csv -Path $outFile -NoTypeInformation -Encoding UTF8 -Append
+    Write-Host "$($s.TimestampUtc) | priv $($s.PrivateMB) MB | WS $($s.WorkingSetMB) MB | handles $($s.Handles) | threads $($s.Threads)"
     Start-Sleep -Seconds $IntervalSeconds
 }
 
