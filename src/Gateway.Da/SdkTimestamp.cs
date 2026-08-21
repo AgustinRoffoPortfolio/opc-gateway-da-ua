@@ -22,8 +22,10 @@ namespace Gateway.Da;
 /// real: el bit 31 prendido en la salida del SDK identifica de forma biunivoca
 /// al valor corrupto. No hay umbrales ni depende de la antiguedad del dato.
 ///
-/// SOLO vale sobre valores que salieron del SDK. Aplicarla a un timestamp de
-/// otra fuente lo correria 7 minutos hacia adelante.
+/// SOLO vale sobre valores que salieron del SDK, y UNA sola vez. La correccion
+/// no es idempotente: como restar 2^32 no toca los 32 bits bajos, el valor ya
+/// corregido conserva el bit 31 prendido y una segunda pasada le sumaria otros
+/// 7 minutos. Se llama en un unico punto, al construir el TagSample.
 /// </remarks>
 public static class SdkTimestamp
 {
