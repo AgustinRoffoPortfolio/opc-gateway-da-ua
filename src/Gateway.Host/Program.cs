@@ -106,13 +106,33 @@ var applicationCertificate = new CertificateIdentifier
     SubjectName = $"CN={options.ApplicationName}, C=AR, O=Portfolio"
 };
 
+// A que interfaz se expone el endpoint UA tiene que ser una decision de
+// configuracion, no un efecto colateral del stack. Con el host escrito como
+// "localhost" el stack lo sustituye por el hostname real de la maquina, y un
+// listener con nombre (no IP) bindea a todas las interfaces: el endpoint queda
+// publicado en la red sin que nadie lo haya decidido. Reescribirlo a 127.0.0.1
+// antes de pasarselo evita esa sustitucion y acota el bind a loopback.
+var configuredUri = new Uri(options.EndpointUrl);
+var endpointHost = configuredUri.Host.Equals("localhost", StringComparison.OrdinalIgnoreCase)
+    ? "127.0.0.1"
+    : configuredUri.Host;
+var endpointPort = configuredUri.Port > 0 ? configuredUri.Port : 4840;
+var endpointUrl = $"{configuredUri.Scheme}://{endpointHost}:{endpointPort}{configuredUri.AbsolutePath}";
+
 // Configuracion armada en codigo, sin archivo XML.
-await application.Build(
+var serverBuilder = application.Build(
         applicationUri: $"urn:{Dns.GetHostName()}:OpcGatewayDaUa:Server",
         productUri: "https://github.com/AgustinRoffoPortfolio/opc-gateway-da-ua")
-    .AsServer(new[] { options.EndpointUrl })
-    .AddUnsecurePolicyNone()          // endpoint sin seguridad, para conectar mientras desarrollamos
-    .AddSignAndEncryptPolicies()      // endpoints firmados y cifrados, ya expuestos para la fase de seguridad
+    .AsServer(new[] { endpointUrl });
+
+// El endpoint sin seguridad (None - None) es trafico sin firmar ni cifrar y sin
+// validacion del certificado del cliente: comodo para desarrollo, pero se
+// enciende a conciencia y no viene de arranque.
+if (options.EnableUnsecureEndpoint)
+    serverBuilder.AddUnsecurePolicyNone();
+
+await serverBuilder
+    .AddSignAndEncryptPolicies()      // endpoints firmados y cifrados
     .AddUserTokenPolicy(UserTokenType.Anonymous)
     .AddSecurityConfiguration(
         new CertificateIdentifierCollection { applicationCertificate },
@@ -132,6 +152,11 @@ else
 {
     Log.Information("Validacion de certificados activa. Clientes confiables en {Trusted}",
         Path.Combine(pkiRoot, "trusted", "certs"));
+}
+
+if (options.EnableUnsecureEndpoint)
+{
+    Log.Warning("Endpoint sin seguridad HABILITADO (None - None): el trafico no se firma ni se cifra.");
 }
 
 // Habilita los nodos de diagnostico del server (ServerDiagnostics). Vienen
@@ -228,7 +253,18 @@ using var timer = new Timer(_ =>
     }
 }, null, TimeSpan.Zero, interval);
 
-Log.Information("Servidor OPC UA escuchando en {Endpoint}", options.EndpointUrl);
+// El alcance de red se avisa segun a que se expone: loopback es una linea mas,
+// pero cualquier direccion alcanzable desde afuera tiene que ser incomoda de
+// pasar por alto en la consola.
+if (IPAddress.TryParse(endpointHost, out var boundAddress) && IPAddress.IsLoopback(boundAddress))
+{
+    Log.Information("Servidor OPC UA escuchando en {Endpoint} (solo loopback)", endpointUrl);
+}
+else
+{
+    Log.Warning("Servidor OPC UA escuchando en {Endpoint}: EXPUESTO A LA RED, alcanzable desde otras maquinas",
+        endpointUrl);
+}
 Log.Information("Ciclo de actualizacion: {IntervalMs} ms", options.UpdateIntervalMs);
 
 // El diagnostico web es accesorio: si no puede levantar (puerto ocupado, por
