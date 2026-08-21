@@ -175,7 +175,7 @@ public sealed class OpcDaTagSource : IDisposable
             samples[itemId] = new TagSample(
                 value.Value,
                 Translate(value.Quality),
-                value.Timestamp.UtcDateTime);
+                SdkTimestamp.Correct(value.Timestamp).UtcDateTime);
         }
 
         return samples;
