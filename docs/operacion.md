@@ -3,8 +3,30 @@
 Cómo se levanta el gateway, qué mirar cuando algo falla, y las anomalías
 observadas contra sistemas reales.
 
-> Documento en construcción. El procedimiento de arranque y el rollback se
-> completan en la Fase 7. Por ahora acumula hallazgos de campo.
+## Levantar el gateway
+
+Desde la raíz del repositorio:
+
+```powershell
+$env:Ua__TagsCsvPath = "ruta\al\tags.csv"
+dotnet run --project src/Gateway.Host
+```
+
+El CSV de mapeo es el único parámetro obligatorio y no tiene default: sin él el
+gateway no arranca. Todo lo demás sale de `appsettings.json`, que **se copia al
+directorio de build**, así que editarlo en el repo no tiene efecto hasta
+recompilar. Es la confusión más frecuente al cambiar configuración.
+
+Un arranque sano imprime, en este orden: la arquitectura del proceso (`X86`, no
+es un error — el driver DA obliga a 32 bits), la ruta de certificados confiables,
+la cantidad de tags cargados y cuántos quedaron fuera de servicio, el endpoint UA,
+y por último la conexión al servidor DA. Si la última línea no aparece, el
+gateway igual queda en pie sirviendo el árbol UA con calidad mala: es el
+comportamiento de la Fase 4, no una falla.
+
+Dos superficies para verificar que quedó bien: la página de diagnóstico en
+`http://localhost:8080` y el endpoint UA en
+`opc.tcp://127.0.0.1:4840/GatewayDaUa`.
 
 ## Anomalías observadas
 
@@ -223,8 +245,9 @@ por `4840`: muestra proceso, dirección remota y timestamps en una sola vista.
 Dos cosas a mirar en esa salida:
 
 - **Si la dirección remota no es `127.0.0.1`**, el cliente está en otra máquina de
-  la red. El gateway escucha hoy en `0.0.0.0`, o sea en todas las interfaces
-  (ver Fase 7: el bind debe pasar a ser configurable).
+  la red — lo que desde la Fase 7 solo es posible si alguien cambió el bind a
+  propósito, porque el default es loopback (ver "A qué interfaz se expone el
+  gateway", más abajo).
 - **Cuántos certificados propios tiene el gateway.** Debe haber exactamente uno:
 
 ```powershell
@@ -242,7 +265,80 @@ comportamiento esperado. Las salidas son borrar el certificado cacheado del stor
 de confianza de ese cliente, o apagarlo si nadie lo usa. Las conexiones huérfanas
 se limpian solas por timeout y los errores cesan.
 
-**Pendiente.** Este ruido no debería vivir en la consola. En la Fase 5, los
-intentos de conexión rechazados pasan a ser un contador en la página de
-diagnóstico, agrupado por motivo. Un rechazo correcto es un evento contable, no
-un error.
+**Resuelto en la Fase 7.** Este ruido sigue en la consola —el stack lo emite y no
+lo silenciamos—, pero ya no es la única forma de enterarse: los intentos de
+conexión rechazados se cuentan y se agrupan por motivo, tanto en la página de
+diagnóstico como en los nodos UA de `Gateway.Counters`. Un rechazo correcto es un
+evento contable, no un error, y ahora tiene un número que lo dice.
+
+Como referencia de escala: dos rechazos de un mismo cliente produjeron doce
+líneas entre `WRN` y `ERR` en la consola, y una sola línea en la página
+(`BadCertificateUntrusted: 2 — último 18:38:46`).
+
+## A qué interfaz se expone el gateway
+
+Por default el servidor UA escucha **solo en loopback** (`127.0.0.1`). Es una
+decisión, no el default del stack: el stack ata a todas las interfaces, y un
+gateway que expone un sistema legado sin autenticación de usuario no debería
+aparecer en la red por accidente. Abrirlo es un acto explícito.
+
+Se verifica con el socket, no con la configuración:
+
+```powershell
+Get-NetTCPConnection -LocalPort 4840 | Select-Object LocalAddress, LocalPort, RemoteAddress, State
+```
+
+Medido en la Fase 7, con el gateway en pie:
+
+LocalAddress LocalPort RemoteAddress State
+
+127.0.0.1 4840 0.0.0.0 Listen
+
+
+El dato del bind está en `LocalAddress`. El `0.0.0.0` de `RemoteAddress` **no**
+significa que acepte conexiones de cualquier origen: un socket en escucha no
+tiene contraparte todavía, y Windows rellena ese campo con ceros. Confundir las
+dos columnas lleva a creer que el gateway está abierto cuando no lo está.
+
+**Al cambiar el bind hay que reemitir el certificado del servidor.** El nombre de
+host viaja en el campo SAN del certificado, y el cliente lo compara contra la URL
+por la que se conectó. Un certificado emitido para una dirección y usado desde
+otra produce un rechazo por nombre de host que parece un problema de red y no lo
+es. El procedimiento es borrar el certificado propio de `pki/own/certs` y dejar
+que el gateway lo emita de nuevo en el próximo arranque, ya con la dirección
+nueva.
+
+
+## Volver atrás
+
+El gateway no tiene estado persistente: no historiza, no escribe en el servidor
+DA, y su configuración son dos archivos. Eso hace que el rollback sea reinstalar
+la versión anterior, sin migración ni limpieza de datos.
+
+1. Frenar el proceso.
+2. Restaurar el paquete publicado anterior, o `git checkout` del tag previo y
+   recompilar.
+3. Restaurar el `tags.csv` y el `appsettings.json` que acompañaban a esa versión.
+   **Son parte del rollback**: un CSV nuevo contra un binario viejo puede fallar
+   por campos que la versión anterior no conoce.
+4. Levantar y verificar contra las dos superficies del arranque.
+
+El único artefacto que sobrevive a un rollback es la PKI (`pki/`). Se conserva a
+propósito: borrarla obligaría a volver a confiar cada cliente. Si se vuelve a una
+versión con otro bind, aplica la reemisión del certificado descrita arriba.
+
+## Ruido conocido — no perseguir
+
+Errores que aparecen en la consola durante operación normal y **no** indican una
+falla:
+
+| Mensaje | Cuándo | Qué es |
+|---|---|---|
+| `ERR` de dominio al conectar | cada conexión exitosa | El servidor validando su propio certificado contra la URL del cliente. Se descarta por thumbprint y no llega a los contadores. Causa exacta no confirmada. |
+| `BadServerHalted` | arranque | Un cliente pidiendo sesión antes de que el server termine de levantar. |
+| `BadSessionIdInvalid` / `BadMessageNotAvailable` | reinicio con UaExpert abierto | El cliente reintentando con una sesión de la corrida anterior. |
+| `Oops! MonitoredItems queued` | bajo carga | Mensaje del stack UA, no del gateway. |
+| 404 de favicon | página de diagnóstico abierta | El navegador pidiendo un ícono que no existe. |
+
+Ninguno de estos suma a los contadores de rechazo: solo cuentan los StatusCode de
+identidad. Un número creciendo ahí sí es alguien insistiendo mal configurado.

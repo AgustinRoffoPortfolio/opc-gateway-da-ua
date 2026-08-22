@@ -510,3 +510,94 @@ nodos de tag, que sí degradan. Es una consecuencia buscada y no un descuido, y
 tiene peso ahora que el gateway se distribuye empaquetado: quien lo reciba va a
 conectarle un cliente que no escribimos nosotros, y conviene que esté documentado
 en vez de que lo descubra durante una caída.
+
+
+## 24. La auditoría de conexiones se engancha en dos lados
+
+Contar intentos de conexión rechazados parecía un contador y resultó ser dos. El
+certificado del cliente se valida al abrir el canal seguro, **antes de que exista
+sesión**; el token de usuario recién al activarla. Son dos caminos distintos del
+stack y no hay un punto único que vea los dos.
+
+Por eso la auditoría se alimenta desde dos enganches: el evento
+`CertificateValidation` del validador, y un override de `ActivateSessionAsync` en
+`UaServer`. Los dos escriben sobre un único `UaAuditCounters`, que es el que
+después leen las dos vistas.
+
+La evidencia de que la partición era necesaria salió de la verificación: un
+rechazo real por certificado untrusted quedó registrado con
+`rejectedByCertificate: 1` y **`sessionsCreated: 0`**. Un diseño que contara todo
+desde los eventos del `SessionManager` habría visto ese rechazo como si no
+hubiera pasado nada.
+
+**El detalle de método que casi lo arruina:** el primer override se escribió
+contra `ActivateSession`, el método síncrono, que compila y nunca se llama —el
+stack usa la variante async y marca la sincrónica como obsoleta. El contador
+habría quedado en cero para siempre sin fallar jamás. Lo agarró un warning
+`CS0618` que era perfectamente ignorable, y es la misma familia de error que el
+bug de `FILETIME`: algo que anda y miente.
+
+## 25. El certificado del propio servidor se descarta por thumbprint
+
+El evento `CertificateValidation` no dispara solo por certificados de clientes.
+Cuando un cliente conecta, el stack valida también **el certificado del propio
+gateway** contra la URL que ese cliente mandó, y con el bind en `127.0.0.1` esa
+validación falla con `BadCertificateHostNameInvalid` sin impedir la conexión.
+
+Medido en la primera corrida de verificación: una conexión exitosa de UaExpert
+produjo `rejectedByCertificate: 1`, con el subject `CN=OpcGatewayDaUa, C=AR,
+O=Portfolio` — el nuestro. El contador estaba reportando un intento rechazado por
+cada cliente que entró sin problemas.
+
+El filtro compara el thumbprint del certificado en evaluación contra el del
+certificado propio, leído después de `CheckApplicationInstanceCertificatesAsync`
+porque antes de esa línea puede no existir. Se descarta por thumbprint y no por
+subject: el subject es texto que otro certificado podría repetir.
+
+**El hallazgo colateral vale más que el filtro.** Este es el mismo `ERR` de
+dominio que venía anotado como cabo suelto sin explicación. Ahora se sabe *quién*
+valida a *quién* —el servidor a sí mismo, contra la URL del cliente—, aunque
+sigue sin saberse por qué `127.0.0.1` no matchea el SAN. Ver `operacion.md`.
+
+## 26. Solo se cuenta lo que es un rechazo
+
+`ActivateSessionAsync` no falla únicamente por identidad rechazada. Por ahí salen
+también fallas del ciclo de vida del servidor, y en la verificación se midieron
+dos: `BadServerHalted` durante el arranque, y `BadSessionIdInvalid` cuando un
+cliente reintenta con la sesión de una corrida anterior.
+
+El primer diseño los mandaba a una categoría `Other`. Es honesto —algo falló al
+activar una sesión— pero produce un número que no significa nada
+operativamente: un contador de intentos rechazados que sube cada vez que se
+reinicia el gateway con UaExpert abierto pierde lo único que tenía para decir,
+que es cuántas veces alguien no pudo entrar.
+
+Así que no se cuentan. Solo suman al contador de token los `StatusCode` que
+significan identidad rechazada (`BadIdentityTokenInvalid`,
+`BadIdentityTokenRejected`, `BadUserAccessDenied`, `BadUserSignatureInvalid`,
+`BadIdentityChangeNotSupported`); el resto se relanza sin registrar. Es el mismo
+criterio de la entrada sobre `Diagnosis`: no publicar como medición algo que es
+ruido.
+
+**El valor `RejectionCategory.Other` se conserva en el enum** aunque hoy nadie lo
+escriba, para que un rechazo real que no sea ni certificado ni token tenga dónde
+ir sin tocar el tipo.
+
+**El límite honesto:** esos eventos dejan de ser visibles como número. Siguen en
+el log del stack, pero quien quiera rastrearlos tiene que ir a leerlo.
+
+## 27. El desglose por motivo no va al address space
+
+La página de diagnóstico expone `rejectionsByReason`, un diccionario de
+`StatusCode` a cantidad. Los nodos UA no: publican los agregados
+(`UaRejectedByCertificate`, `UaRejectedByToken`, `UaRejectedTotal`) y el último
+motivo como texto, y nada más.
+
+Un diccionario de tamaño variable en el address space significaría crear nodos en
+runtime, a medida que aparecen motivos nuevos. **El árbol UA es un contrato:** un
+cliente que navegó el espacio de nombres al conectarse asume que lo que vio sigue
+ahí. En JSON, en cambio, un objeto que crece no le rompe nada a nadie.
+
+Los nodos nuevos van bajo `Gateway.Counters`, junto a los contadores del lado DA,
+y no en una carpeta propia. Quien abre el diagnóstico todavía no sabe de qué lado
+está el problema; separarlos lo obligaría a adivinar antes de mirar.

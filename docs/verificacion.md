@@ -183,6 +183,91 @@ pudiera desmentirla, y esa recién llegó en la Fase 6.
 
 Tests: 54/54.
 
+
+## Fase 7 — seguridad y entrega · **en curso**
+
+Sección abierta, a diferencia del resto: la fase no está cerrada. Recoge lo
+verificado hasta la tanda 3.
+
+**El bind quedó acotado a loopback.** Antes, dos listeners (`::` y `0.0.0.0`,
+o sea todas las interfaces); después, uno solo en `127.0.0.1`. Comprobado con
+`Get-NetTCPConnection`. El discovery pasó de 4 endpoints a 3, todos
+`Sign & Encrypt`, sin `None - None`. El detalle del procedimiento está en
+[operacion.md](operacion.md).
+
+**Los tags son de solo lectura y el servidor lo hace cumplir.** Dos escrituras
+desde UaExpert a dos tags distintos de `PLANTA_01.EQUIPO_001`, las dos rechazadas
+con `BadNotWritable`. Importa que se haya probado y no solo leído el código: que
+un nodo declare `AccessLevel = CurrentRead` es una declaración, y lo que se quería
+verificar es que el stack la aplique sin que el node manager intercepte nada.
+
+**La validación estricta de certificados rechaza de verdad.** Con
+`AutoAcceptUntrustedCertificates` en `false`, se sacó el certificado de UaExpert
+de `pki/trusted/certs` y se intentó conectar: rechazo con
+`BadCertificateUntrusted`, sesión no establecida, y el cliente sin poder entrar.
+Es la primera comprobación directa de la política de la tanda 1 contra un cliente
+real y no contra el propio log de arranque.
+
+### La auditoría de conexiones, verificada en cinco pasos
+
+Se probó en este orden a propósito: primero que el contador esté limpio, después
+que suba cuando debe. Sin el piso limpio, un número distinto de cero no prueba
+nada.
+
+| # | Escenario | Resultado |
+|---|---|---|
+| 1 | Gateway arrancado, UaExpert conectado normal | `sessionsCreated: 1`, los cuatro contadores de rechazo en 0 |
+| 2 | Certificado de UaExpert fuera de confiados | `rejectedByCertificate: 1`, `BadCertificateUntrusted`, `sessionsCreated: 0` |
+| 3 | Nodos UA bajo `Gateway.Counters` | los siete publicando, coincidiendo con el JSON |
+
+El resultado del escenario 2 es el que justifica el diseño: **el rechazo ocurrió
+sin que existiera sesión.** Una auditoría construida sobre los eventos del
+`SessionManager` no habría visto nada. Ver decisión 24.
+
+Llegar a ese piso limpio costó dos falsos positivos, los dos corregidos y los dos
+documentados: el gateway contando su propio certificado como intento rechazado
+(decisión 25) y el ruido del ciclo de vida del servidor contado como rechazo
+(decisión 26). Los dos aparecieron mirando el número, no leyendo el código.
+
+**Lo que todavía no está verificado en esta fase:** el rechazo por token de
+usuario. El contador está escrito y filtra por los `StatusCode` de identidad,
+pero no se provocó un rechazo real —haría falta un cliente que mande
+usuario/contraseña contra un servidor que solo declara `Anonymous`—. Se declara
+no corrido, no verificado.
+
+Dos detalles del escenario 4 que valen más que el contador en sí. **Fueron dos
+rechazos y no uno**: UaExpert reintentó por su cuenta, y el contador sumó los dos
+porque no hay deduplicación. Ese número creciendo es exactamente la señal de que
+hay un cliente insistiendo mal configurado, que era el caso real que originó el
+requerimiento. Y **esos dos rechazos produjeron doce líneas** entre `WRN` y `ERR`
+en la consola, contra una sola línea en la página: la relación entre las dos
+superficies es el argumento del ítem, medido.
+
+El escenario 5 verifica algo que se pasa por alto: los contadores son
+acumulativos desde el arranque del proceso y **no se resetean** cuando la
+condición se corrige. Un contador que vuelve a cero al reconectar borraría
+justamente la evidencia de que algo estuvo mal.
+
+### El bind, verificado contra el socket
+
+`Get-NetTCPConnection -LocalPort 4840` devuelve `LocalAddress 127.0.0.1` en
+estado `Listen`. Se verifica contra el socket y no contra `appsettings.json`
+porque lo que importa es qué ató el proceso, no qué se le pidió que atara.
+
+El `0.0.0.0` que aparece en `RemoteAddress` es relleno de Windows para un socket
+sin contraparte, no un bind abierto. Queda anotado porque es una lectura fácil de
+errar en la dirección peligrosa: creer que está abierto cuando no lo está, o al
+revés.
+
+### Los nodos de último rechazo, sobre el piso limpio
+
+`UaLastRejectionReason` y `UaLastRejectionUtc` publicaban string vacío cuando no
+hubo rechazos, rompiendo el patrón del resto del árbol
+(`Status.LastSuccessfulCycleUtc` publica `"nunca"`). Corregido a
+`"ninguno"` / `"nunca"` y verificado en UaExpert: ambos nodos con `StatusCode`
+`Good`. Un `""` obliga al cliente a adivinar si no hubo rechazos o si el nodo
+dejó de publicarse.
+
 ## Pendientes abiertos
 
 - **El servidor DA colgado sin morir no está cubierto.** Falta un timeout sobre
@@ -197,6 +282,11 @@ Tests: 54/54.
   en [calidad-da-ua.md](calidad-da-ua.md).
 - **El video de la demo de Fase 2 está sin editar.** Es la pieza de mayor peso
   demostrativo del proyecto.
+- **El `UaLoadClient` no tiene certificado propio.** Se construyó en la Fase 6
+  para conectar por el endpoint `None`, que la Fase 7 apaga por default. Con la
+  seguridad activa ni siquiera llega a la red: falla con `BadConfigurationError`
+  por no encontrar certificado para `Basic256Sha256`. Volver a correr las pruebas
+  de carga hoy exige encender `EnableUnsecureEndpoint`.
 - **Las mediciones de la Fase 6 están a medio hacer.** Ver las limitaciones
   declaradas en [pruebas-carga.md](pruebas-carga.md).
 
