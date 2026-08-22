@@ -213,12 +213,34 @@ Set oscila ±25 MB solo, por el recorte del sistema operativo. Los 72,7 MB de es
 tabla caen dentro del rango observado para esa misma configuración; los 148,7 MB
 de Fase 5 no se reprodujeron. Ver [Corrida 2](#corrida-2--18082026--memoria-dos-configuraciones-en-la-misma-sesión).
 
-**Desfasaje del SourceTimestamp (~7 min) — resuelto, es del simulador.** Durante
-esta corrida el `SourceTimestamp` que llegaba a UaExpert estaba desfasado unos 7
-minutos y 10 segundos respecto del `ServerTimestamp`. El valor avanzaba
-correctamente ciclo a ciclo, así que no era un timestamp congelado, y la
-hipótesis de que viniera del simulador no cerraba: el cliente OPC DA de Matrikon,
-leyendo el mismo item del mismo servidor, mostraba hora actual.
+**Desfasaje del SourceTimestamp (~7 min) — RESUELTO en Fase 6: era un bug del SDK
+cliente DA.** Durante esta corrida el `SourceTimestamp` que llegaba a UaExpert
+estaba desfasado 7 minutos y 9,5 segundos respecto del `ServerTimestamp`, de forma
+intermitente. La causa real, identificada el 21/08/2026, es un error de conversión
+de `FILETIME` en `TitaniumAS.Opc.Client`: recompone los dos campos de 32 bits sin
+enmascarar el campo bajo, que en .NET está declarado con signo, y cuando el bit 31
+está prendido el resultado sale 2³² ticks abajo — 429,4967296 s exactos. Ese bit
+alterna cada ~3 min 35 s, y de ahí la intermitencia. La aritmética completa, la
+evidencia medida y la corrección están en
+[`bug-filetime-sdk.md`](bug-filetime-sdk.md).
+
+Lo que decía este asunto hasta el 22/08/2026 —que la culpa era del simulador, que no
+refrescaría los timestamps sin un segundo cliente DA conectado— **es falso**, y vale
+la pena dejar anotado por qué se creyó. La hipótesis se apoyaba en una única
+observación: al abrir MatrikonOPC Explorer para comparar, el desfase desaparecía. Se
+la leyó como "el observador altera lo que mide", que es una explicación elegante y
+encaja con la intuición. Bajo el mecanismo real fue una coincidencia con un borde de
+bloque de ~3 min 35 s. Los datos para descartarla ya estaban acá: el desfase
+alternaba entre ciclos consecutivos y siempre valía el mismo número. Lo que faltó no
+fue mirar más, fue medir y reconocer el número.
+
+Consecuencia para el material de demo: la recomendación anterior era dejar el
+configurador **cerrado** para que el desfase se viera, argumentando que hacía visible
+que `SourceTimestamp` y `ServerTimestamp` son dos relojes distintos. Eso sería grabar
+el bug. Con la corrección aplicada, la demo correcta muestra el `SourceTimestamp`
+pegado al reloj del servidor DA y el `ServerTimestamp` unos cientos de milisegundos
+después — que es la diferencia real entre los dos relojes, y es de milisegundos, no
+de minutos.
 
 Eso último era justamente la pista, leída al revés. Durante la Fase 5 se observó
 que **con el configurador de MatrikonOPC abierto el desfase desaparece** y los dos
@@ -426,10 +448,15 @@ era el asentamiento del heap bajo carga alta, no memoria que el gateway soltara.
 ### Nota sobre el configurador de MatrikonOPC
 
 Estas corridas —y también las de la corrida 2— se hicieron con el **configurador
-de MatrikonOPC abierto**. El configurador es un cliente DA más, así que su
-presencia normaliza los timestamps del simulador y hace desaparecer el desfasaje
-de `SourceTimestamp` documentado en la corrida 1. Para mediciones de recursos y
-de tasa de lectura no cambia nada; para grabar material de demo, hay que cerrarlo.
+de MatrikonOPC abierto**. Se lo dejaba abierto por la hipótesis, hoy descartada, de
+que un segundo cliente DA "normalizaba" los timestamps del simulador. La causa real
+del desfasaje era un bug del SDK cliente DA, no el simulador: ver el cierre al final
+de este documento y [`bug-filetime-sdk.md`](bug-filetime-sdk.md).
+
+Para las mediciones de esta corrida la condición es indistinta —se compara tasa de
+ciclos, no timestamps—, así que los resultados valen igual. Para grabar la demo, la
+recomendación quedó **al revés** de lo que decía esta nota: con el bug corregido, el
+`SourceTimestamp` es correcto siempre, sin depender de quién más esté conectado.
 
 
 ## Corrida 4 — 19/08/2026 — Latencias DA→cache y cache→cliente
@@ -530,20 +557,13 @@ palanca de configuración, no un límite del diseño.
   (corrida 1), pero la latencia cache→cliente con carga alta queda sin medir.
 - **Un solo cliente.** No se midió si la latencia se degrada con 4 clientes.
 
-### Corrección a la nota sobre el configurador de MatrikonOPC
+### Nota sobre el desfasaje de `SourceTimestamp`
 
-La corrida 3 anotó que el configurador abierto normaliza los timestamps del
-simulador. Esta corrida lo pone en duda: la ventana estuvo abierta, con la
-configuración cargada, y la barra de estado marcó `Clients: 1` — o sea, el gateway
-y nadie más.
-
-La hipótesis corregida es que **lo que normaliza no es tener el configurador
-abierto, sino tener un panel que efectivamente lea items** (Quick Client, o un
-cliente DA aparte). Si se confirma, no haría falta cerrar nada para grabar la demo.
-
-**Sin verificar todavía:** no se sabe si en las corridas anteriores la barra decía
-`Clients: 1` o `Clients: 2`. Se confirma mirando el `SourceTimestamp` en la página
-de diagnóstico y viendo si está desfasado ~430 s.
+Durante esta corrida el desfasaje seguía sin explicación y se lo atribuía al
+simulador. La causa real —un bug del SDK cliente DA— se identificó recién el
+21/08/2026: ver el cierre al final de este documento y
+[`bug-filetime-sdk.md`](bug-filetime-sdk.md). No afecta a las latencias medidas acá,
+que no usan `SourceTimestamp` como instrumento.
 
 ## Corrida 5 — Soak de 2 horas (ítem 4 de la Fase 6)
 
@@ -617,11 +637,30 @@ se agregaría liberación explícita (`Marshal.ReleaseComObject` en `finally`) p
 bajar el techo de handles y hacerlo predecible. Se documenta como decisión
 consciente, no como omisión.
 
-### Actualización a la nota sobre el configurador de MatrikonOPC
-La verificación pendiente de la corrida 4 se hizo al inicio de esta corrida: con el
-configurador abierto sin monitoreo (`Clients: 1`), el `SourceTimestamp` mostró ~1 s
-de diferencia contra `LastUpdateUtc` en los 500 tags, y la antigüedad marcó 0,2 s.
-**El desfasaje de ~430 s no se observó.**
+### Cierre del tema: el desfasaje era un bug del SDK, no del simulador
+
+Las notas de las corridas 3 y 4 atribuían el desfasaje de `SourceTimestamp` al
+simulador de Matrikon y discutían bajo qué condiciones "se normalizaba". **Las dos
+estaban equivocadas.** El 21/08/2026 se identificó la causa real: un error de
+conversión de `FILETIME` en el SDK cliente DA, que restaba exactamente 2³² ticks
+(429,4967296 s) cada vez que el bit 31 del campo bajo estaba prendido. Ese bit
+alterna cada ~3 min 35 s, y de ahí la intermitencia que nunca cerró. La aritmética,
+la evidencia medida y la corrección están en
+[`bug-filetime-sdk.md`](bug-filetime-sdk.md); acá no se repiten.
+
+La observación de esta corrida —`SourceTimestamp` a ~1 s, sin desfasaje— era real,
+pero no significaba lo que parecía: cayó en un bloque con el bit apagado. La nota
+original acertó al no concluir nada de una medición puntual, aunque por la razón
+equivocada.
+
+**Qué implica para los números de este documento: nada.** Ninguna medición usa
+`SourceTimestamp` como instrumento. El tramo DA→cache se cronometra con `Stopwatch`
+dentro del ciclo de adquisición, el tramo cache→cliente usa el nodo sonda
+`Gateway.Performance.CacheStampUtc` contra el reloj de la máquina, y la degradación
+por antigüedad se calcula con `LastUpdateUtc`. La condición "configurador abierto"
+que figura en las corridas 2, 3 y 4 se eligió por una hipótesis falsa, pero no tuvo
+efecto sobre ningún resultado publicado: los instrumentos ya eran independientes del
+timestamp de origen.
 
 Esto **no confirma ni descarta** la hipótesis de Quick Client. El fenómeno ya se
 comportó de forma intermitente en corridas anteriores — apareció, desapareció y

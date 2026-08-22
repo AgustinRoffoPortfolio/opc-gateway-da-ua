@@ -22,9 +22,16 @@ Verificado:
 
 - **Valor, calidad y timestamp llegan intactos de punta a punta.** Valor idéntico
   al último decimal entre MatrikonOPC Explorer y UaExpert, `SourceTimestamp`
-  idéntico al milisegundo, y `ServerTimestamp` ~370 ms posterior. El detalle de
-  la medición y la anomalía que apareció durante la verificación están en
-  [operacion.md](operacion.md).
+  idéntico al milisegundo, y `ServerTimestamp` ~370 ms posterior. El detalle de la
+  medición está en [operacion.md](operacion.md). La anomalía que apareció durante
+  esta verificación —`SourceTimestamp` atrasado ~7 min de forma intermitente— resultó
+  ser un bug del SDK cliente DA, identificado y corregido en la Fase 6:
+  [`bug-filetime-sdk.md`](bug-filetime-sdk.md).
+
+  Nota para regrabar la demo: los números de arriba son exactamente lo que la demo
+  tiene que mostrar —`SourceTimestamp` pegado al reloj del servidor DA y
+  `ServerTimestamp` unos cientos de milisegundos después—, y con la corrección
+  aplicada salen así siempre, sin depender de qué otro cliente DA esté conectado.
 
 Deuda: el video de demo está grabado pero sin editar.
 
@@ -160,13 +167,19 @@ documento de carga advierte que tienen costo. Queda anotado como observación a
 resolver en la Fase 6, midiendo las dos configuraciones en la misma corrida en vez
 de comparar contra una tabla vieja.
 
-**Hallazgo lateral confirmado.** Con el configurador de MatrikonOPC abierto, el
-desfase del `SourceTimestamp` **desaparece**: los dos timestamps coinciden al
-segundo. Es la anomalía conocida del simulador vista desde el otro lado, y sin
-buscarla. Cierra el pendiente que
-[pruebas-carga.md](pruebas-carga.md) había dejado con hipótesis abiertas: el
-desfase es del simulador y no del gateway. El detalle, en
-[operacion.md](operacion.md).
+**Hallazgo lateral — resultó ser un falso positivo.** Acá se registró que con el
+configurador de MatrikonOPC abierto el desfase del `SourceTimestamp` desaparecía, y
+se lo anotó como confirmación independiente de que la causa era el simulador. **No
+era independiente ni confirmaba nada.** Era la misma hipótesis de
+`pruebas-carga.md` encontrando su propio reflejo en una segunda coincidencia: bajo
+el mecanismo real —un bug de conversión de `FILETIME` en el SDK cliente DA, con un
+ciclo de ~3 min 35 s— la observación cayó en un bloque con el desfase apagado. Ver
+[`bug-filetime-sdk.md`](bug-filetime-sdk.md).
+
+Queda anotado en vez de borrado porque el error de método es más útil que el
+hallazgo que pretendía ser: dos observaciones que se confirman entre sí pueden estar
+las dos explicadas por la misma coincidencia. Lo que faltaba era una medición que
+pudiera desmentirla, y esa recién llegó en la Fase 6.
 
 Tests: 54/54.
 
@@ -210,7 +223,21 @@ Las dos fallas más caras del proyecto pasaron por la suite de tests sin
 inmutarse, y aparecieron corriendo el sistema completo contra algo real.
 
 La primera fue el `SourceTimestamp` atrasado siete minutos: el driver cumplía su
-contrato, así que ningún test unitario podía verlo (ver [operacion.md](operacion.md)).
+contrato y ningún test unitario podía verlo, porque el componente que devolvía mal
+el dato no era código propio sino el SDK cliente DA
+([`bug-filetime-sdk.md`](bug-filetime-sdk.md)).
+
+Ese caso tiene un segundo tiempo que conviene separar del primero. Mirar el borde
+real hizo aparecer el síntoma en la Fase 2, pero la causa recién salió en la Fase 6:
+cuatro fases con una hipótesis equivocada —que la culpa era del simulador— sostenida
+por observaciones que parecían confirmarla. Lo que la derribó no fue mirar más ni
+mirar mejor, fue **medir y reconocer el número**: el desfase valía siempre
+429,4967296 s exactos, y ese número es 2³² ticks de 100 ns. Un desfase real habría
+dado un continuo de valores; dos valores exactos y ni uno intermedio son la firma de
+un error aritmético, no de un reloj lento. La lección, entonces, es doble: el borde
+entre dos sistemas es donde aparecen estas fallas, pero cuando el síntoma trae un
+número repetido y exacto, ese número es la pista principal y hay que gastarlo antes
+que cualquier hipótesis narrativa.
 La segunda fue un `MULTIPLICADOR` de `1,5` que parseaba en silencio como 15,
 porque `CultureInfo.InvariantCulture` acepta la coma como separador de miles si
 no se pasa `NumberStyles.Float` explícito. Los 37 tests estaban en verde: el caso
