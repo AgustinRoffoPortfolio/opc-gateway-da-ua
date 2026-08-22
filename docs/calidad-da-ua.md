@@ -180,6 +180,15 @@ de `Gateway.Da`; de ahí para adentro se asume cumplida. Dejarlo pasar sin
 normalizar produciría saltos de una hora dos veces al año, imposibles de rastrear
 meses después en un historiador.
 
+En ese mismo borde se aplica la corrección de un bug del SDK cliente DA, que
+recompone mal los 64 bits del `FILETIME` y devuelve el timestamp 429,4967296 s
+atrasado cuando el bit 31 del campo bajo está prendido. El detalle está en
+[`bug-filetime-sdk.md`](bug-filetime-sdk.md); acá importa una sola cosa: **la
+corrección no es idempotente**, porque el valor corregido conserva el bit prendido y
+una segunda pasada le sumaría otros siete minutos. Se aplica exactamente una vez, en
+`SdkTimestamp.Correct()`, al construir el `TagSample`. De ahí para adentro el
+timestamp se asume correcto y no se vuelve a tocar.
+
 ## Fuera de alcance de la PoC
 
 - **Los bits de límite.** La especificación los mapea a los Limit Bits del

@@ -142,7 +142,18 @@ Las veinte y pico de decisiones numeradas, con su porqué, están en
 ## Licencia
 
 MIT. La licencia del repositorio quedó determinada por la del SDK cliente OPC DA
-elegido en la Fase 0: [`TitaniumAS.Opc.Client.NetCore`](https://github.com/titanium-as/TitaniumAS.Opc.Client)
-1.0.2.1, publicado bajo MIT. Si el SDK hubiera sido GPL, el repositorio sería GPL;
-al ser permisivo, se optó por MIT para no imponer restricciones que la librería no
-impone.
+elegido en la Fase 0: `TitaniumAS.Opc.Client.NetCore` 1.0.2.1, publicado bajo MIT.
+Si el SDK hubiera sido GPL, el repositorio sería GPL; al ser permisivo, se optó por
+MIT para no imponer restricciones que la librería no impone.
+
+**El paquete que se usa no es el oficial.** El proyecto original,
+[TitaniumAS.Opc.Client](https://github.com/titanium-as/TitaniumAS.Opc.Client),
+targetea `net40` puro y no corre en .NET moderno. `...NetCore` 1.0.2.1 es un
+repaquetado de un tercero (owner `MysticBoy`, publicado en septiembre de 2018, sin
+repositorio de origen declarado en NuGet). Se eligió porque era la única vía para
+consumir el SDK desde .NET 10 sin vendorizar el fuente.
+
+Esa distinción no es un detalle de procedencia: es la explicación de por qué el
+proyecto arrastró durante cinco fases un bug de conversión de `FILETIME` que
+upstream ya había corregido en 2021 y que nunca se publicó en NuGet. El diagnóstico
+completo está en [docs/bug-filetime-sdk.md](docs/bug-filetime-sdk.md).

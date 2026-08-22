@@ -24,6 +24,7 @@ aparte:
 | [verificacion.md](verificacion.md) | Qué se comprobó con los propios ojos, fase por fase |
 | [pruebas-carga.md](pruebas-carga.md) | Las mediciones de volumen, con sus límites |
 | [operacion.md](operacion.md) | Cómo se levanta y qué mirar si falla |
+| [bug-filetime-sdk.md](bug-filetime-sdk.md) | El bug de conversión de `FILETIME` del SDK cliente DA, su corrección y la evidencia |
 | [glosario.md](glosario.md) | La jerga del dominio |
 
 ## Diagrama
@@ -92,7 +93,21 @@ src/
 ├── Gateway.Da/     # cliente DA + OpcDaTagSource
 ├── Gateway.Ua/     # server core, node manager, address space
 ├── Gateway.Web/    # Kestrel + diagnóstico
-└── Gateway.Host/   # composición y arranque
+└── Gateway.Host/ # composición y arranque
+
+tools/
+└── TimestampProbe/ # experimento reproducible del bug de FILETIME
+
+
+`tools/` es una desviación consciente de la estructura estándar del portfolio, que
+solo contempla `src/` y `tests/`. Un experimento reproducible no es ninguna de las
+dos cosas: no es código del producto, y no es un test porque su salida es un CSV
+para analizar, no un verde o un rojo. Vale conservarlo porque la evidencia de un
+diagnóstico se tiene que poder volver a generar, no solo leer.
+
+El grafo de referencias es deliberado: `Core` no referencia a nadie, y `Ua` no
+referencia a `Da`. Eso hace que dos reglas de arquitectura las imponga el
+compilador en vez de la disciplina personal:
 ```
 
 El grafo de referencias es deliberado: `Core` no referencia a nadie, y `Ua` no
@@ -102,6 +117,14 @@ compilador en vez de la disciplina personal:
 - **Ningún tipo del SDK de OPC DA cruza el borde de `Gateway.Da`.** Salen tipos
   propios del gateway (enum de calidad, `DateTime`, valor convertido), nunca un
   tipo del SDK. Si el SDK se reemplaza, el cambio queda contenido en un proyecto.
+
+  El bug de `FILETIME` ([bug-filetime-sdk.md](bug-filetime-sdk.md)) marcó hasta
+  dónde llega esa garantía. El SDK nunca devolvió un tipo propio: devolvía un
+  `DateTime` de .NET perfectamente válido, con siete minutos de menos. El borde
+  aísla los *tipos* de la dependencia, no la *corrección de sus valores*, y por eso
+  la corrección vive justo ahí, en el mismo lugar donde ya se normalizaba la zona
+  horaria. Un borde que traduce tipos es también el único lugar sensato para
+  compensar lo que la dependencia hace mal.
 - **El node manager no sabe de dónde salen los datos.** Habla con la cache de
   `Core`. Ignoró Modbus en el proyecto anterior e ignora COM y OPC DA acá, sin
   que haya hecho falta tocarlo.
