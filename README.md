@@ -125,15 +125,31 @@ Las veinte y pico de decisiones numeradas, con su porqué, están en
       gateway y con la degradación visible desde el cliente UA.
 - [x] **Fase 5 — Diagnóstico.** Nodos UA de diagnóstico y página web de estado
       con vistas de operador y de detalle.
-- [~] **Fase 6 — Carga y validación cruzada.** *(parcial)* Corrida de escalones
-      500 / 4.000 / 8.000 tags: sin errores, arranque del address space en menos
-      de un segundo, memoria plana en ~73 MB y sin crecimiento en un soak de 33
-      minutos. Con la salvedad de que los 8.000 aliases se alimentan de 4 ItemID
-      de origen, así que la carga del lado UA es el peor caso pero no son 8.000
-      señales independientes. **Faltan** el escenario de variación parcial, los
-      clientes UA múltiples, los soaks de 8 y 24 h, la medición de latencias
-      DA→cache y cache→cliente, y la validación cruzada contra una referencia
-      independiente.
+- [x] **Fase 6 — Carga y validación cruzada.** Cinco corridas
+      documentadas en [docs/pruebas-carga.md](docs/pruebas-carga.md):
+
+      - **Escalones 500 / 4.000 / 8.000 tags:** sin errores, arranque del address
+        space en menos de un segundo. Salvedad: los 8.000 aliases se alimentan de
+        4 ItemID de origen, así que es el peor caso para el lado UA pero no son
+        8.000 señales independientes.
+      - **4 clientes UA simultáneos sobre los mismos 500 tags:** la tasa de lectura
+        DA no se movió (0,989 → 0,987 ciclos/s) mientras las notificaciones UA se
+        multiplicaban por 4,36, con memoria y handles planos. Es la tesis de la
+        cache medida: los clientes UA no le llegan al servidor legado.
+      - **Latencias de punta a punta:** DA→cache 6,2 ms de media (máx 24,9);
+        cache→cliente 497,6 ms de mediana y 1025,7 ms de p95, dominadas por el
+        intervalo de publicación de 1000 ms, no por el gateway.
+      - **Soak de 2 h:** Private Bytes entre 51,9 y 54,1 MB sin tendencia. Los
+        handles oscilan en diente de sierra entre 546 y 714 —los RCWs se liberan
+        por el finalizador, no de forma determinística— pero sin crecimiento neto:
+        el pico más alto es de los 22 minutos. Sin fuga de memoria ni de handles COM.
+      - **Bug de `FILETIME` del SDK cliente DA** identificado, corregido y cubierto
+        con tests ([docs/bug-filetime-sdk.md](docs/bug-filetime-sdk.md)).
+
+      **Fuera de alcance por decisión:** el escenario de variación parcial, los
+      soaks de 8 y 24 h, y la validación cruzada contra una referencia
+      independiente. Con la tesis de la cache ya medida y sin fuga en 2 h, el
+      esfuerzo restante rendía menos que cerrar el proyecto y presentarlo.
 - [ ] **Fase 7 — Seguridad y entrega.** Endpoints firmados y cifrados, usuarios y
       roles, servicio de Windows.
 - [ ] **Fase 8 — Opcional.** Recarga de configuración en caliente y escritura
