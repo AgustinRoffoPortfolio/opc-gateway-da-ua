@@ -8,94 +8,45 @@ observadas contra sistemas reales.
 
 ## Anomalías observadas
 
-### `SourceTimestamp` atrasado (Fase 2, confirmado en Fase 3)
+### `SourceTimestamp` atrasado — RESUELTO en Fase 6
 
-Durante la verificación de la Fase 2, los valores llegaban correctos a UaExpert
-pero con un `SourceTimestamp` ~7 minutos anterior a la hora real. Se observó dos
-veces, con magnitud casi idéntica (7m09,5s y 7m10s).
+Durante las fases 2 a 5, el `SourceTimestamp` llegaba intermitentemente ~7 minutos
+atrasado. **La causa es un bug de conversión de `FILETIME` en el SDK cliente DA,
+no del simulador.** El gateway lo corrige desde la Fase 6 en
+`Gateway.Da.SdkTimestamp.Correct()`.
 
-**Qué se descartó.** El desfase era constante entre lecturas sucesivas
-(2,047000 s de avance del reloj del servidor contra 2,046793 s de reloj real), lo
-que descarta drift. Se instrumentó el borde del driver logueando el
-`DateTimeOffset` crudo del SDK, antes de cualquier conversión, junto al reloj de
-pared tomado en la misma línea: los dos venían corridos por la misma cantidad, así
-que el gateway transmitía fielmente lo que el servidor DA le daba. Eso descartó
-el driver, la conversión a UTC y el modo de lectura en una sola corrida. También
-se descartaron cambios de hora del sistema (sin eventos `Kernel-General` Id 1 en
-la ventana), suspensión, reinicio del simulador (mismo PID) y configuración de
-alias: en la segunda ocurrencia, un alias y el item directo que lo alimenta
-mostraron el mismo timestamp en la misma ventana de MatrikonOPC Explorer.
+La historia completa, con la aritmética, la evidencia medida y el error de método
+que mantuvo viva la hipótesis equivocada durante tres fases, está en
+**[bug-filetime-sdk.md](bug-filetime-sdk.md)**.
 
-**El patrón, confirmado en Fase 3.** Las dos veces el desfase apareció con el 
-simulador sin clientes DA activos fuera del gateway, y las dos veces desapareció
-al agregar un item en MatrikonOPC Explorer. En la segunda ocurrencia Explorer
-mostraba la hora correcta mientras el gateway recibía la atrasada. La hipótesis
-de trabajo es que el simulador no refresca los timestamps de sus items sin
-lectura activa de por medio, y que el gateway solo no alcanza para mantenerlo
-despierto. En la Fase 2 no se confirmó ni se persiguió más — el driver ya estaba
-descartado por medición y el objetivo de la fase no era diagnosticar el
-simulador — y quedó como deuda, que es lo que cierra el bloque siguiente.
+**Qué se descartó correctamente en su momento** (sigue siendo válido): drift de
+reloj, cambios de hora del sistema, suspensión, reinicio del simulador, y
+configuración de aliases. También se instrumentó el borde del driver y se
+comprobó que transmitía fielmente lo que recibía — correcto, pero incompleto: el
+SDK quedaba una capa por debajo del punto donde se estaba midiendo.
 
-**Confirmación (Fase 3).** Una tercera corrida, instrumentada igual, cerró la
-hipótesis con tres evidencias que en la Fase 2 no se tenían. Primera: el desfase
-no es un estado que se instala, sino que **alterna entre ciclos consecutivos** —
-lecturas separadas por un segundo daban 0,865 s y 430,341 s de atraso — lo que
-descarta cualquier reloj que derive o se resincronice. Segunda: los timestamps
-atrasados terminan **siempre** en la misma fracción de sub-milisegundo (`...2704`)
-y los frescos en `...0000000`, o sea que el servidor responde desde dos bases de
-tiempo distintas, no desde una que se corrige. Tercera: matando el proceso
-`OPCSim` y dejando que COM lo relevante de nuevo, el desfase reaparece con la
-misma firma
-y retomando la hora donde la había dejado la instancia anterior, así que el
-offset no vive en la memoria del proceso.
+**Qué hacer si reaparece.** Buscar timestamps terminados en `.5032704`. Esa firma
+es exclusiva de este bug. Si aparece, la corrección no se está aplicando en algún
+camino de lectura nuevo: todos tienen que pasar por `SdkTimestamp.Correct()`, y
+exactamente una vez (no es idempotente).
 
-El cierre llegó al conectar MatrikonOPC Explorer sobre el mismo `ItemID` mientras
-el gateway corría: el atraso pasó de ~430 s a ~0,84 s **en el ciclo exacto** en
-que Explorer agregó el item, y la firma de sub-milisegundos cambió con él.
-Confirma la hipótesis de Fase 2: el simulador no refresca los timestamps de sus
-items sin un cliente que lo mantenga despierto, y una lectura por `Cache` desde
-el gateway solo no alcanza. El reporte original de que "Explorer mostraba hora
-correcta" se explica solo: la mostraba **porque su propia presencia la producía**.
+**Cómo grabar la demo.** Con el bug corregido, el `SourceTimestamp` sigue al reloj
+y el `ServerTimestamp` queda unos cientos de ms después. Esa separación chica es
+la que hay que mostrar: son dos relojes distintos, y el de origen no se pisa. Un
+atraso de 7 minutos en pantalla ya no es una curiosidad del simulador, es el bug
+sin corregir.
 
-**Observación de Fase 5.** El fenómeno reapareció al revés y sin buscarlo, lo que
-vale como confirmación independiente: durante la corrida de 8.000 tags el
-configurador quedó abierto con el escenario cargado, y la página de diagnóstico
-mostró `SourceTimestamp` y `LastUpdateUtc` idénticos al segundo, sin desfase
-alguno. En la corrida anterior de la misma sesión, con la configuración chica y
-sin el configurador abierto, la diferencia era de ~430 s. Es la misma causa vista
-desde el otro lado: no hizo falta agregar un item en Explorer — alcanzó con que
-hubiera un cliente DA presente.
+**Consecuencia para la Fase 4, sin cambios.** La degradación por antigüedad se
+sigue midiendo con `LastUpdateUtc` (reloj del gateway) y no con `SourceTimestamp`.
+El motivo original ya no aplica, pero el criterio es correcto igual: el
+`SourceTimestamp` lo produce un sistema ajeno y no hay garantía de que su reloj
+esté sincronizado con el nuestro.
 
-**Cómo reproducir la demo sin confundirse.** Según esté o no abierto el
-configurador de Matrikon, la página de diagnóstico va a mostrar los dos
-timestamps juntos o separados por siete minutos. Las dos cosas son correctas y
-ninguna es un bug del gateway. Para grabar material donde se vea que el
-`SourceTimestamp` **no** se pisa con la hora de lectura, conviene dejar el
-configurador cerrado: el desfase es justamente lo que hace visible que son dos
-relojes distintos.
-
-**Resolución: no se corrige, se documenta.** Es comportamiento del simulador, no
-del gateway. La evidencia medida en el borde del driver muestra que el
-`SourceTimestamp` se transporta fiel; corregirlo del lado del gateway implicaría
-pisarlo con la hora local, que es exactamente lo que la decisión 2 prohíbe.
-Contra un servidor DA de producción hay que volver a verificarlo antes de dar por
-sentado que no ocurre.
-
-**Consecuencia para la Fase 4.** La degradación por antigüedad se mide con
-`LastUpdateUtc` (reloj del gateway, cuándo refrescamos nosotros) y no con
-`SourceTimestamp`. Con esta anomalía activa, un criterio basado en
-`SourceTimestamp` marcaría como caídos tags que están llegando bien, y el
-objetivo de detección < 10 s sería inalcanzable por una causa ajena al gateway.
-
-**Estado verificado.** Con el desfase ausente: valor idéntico al último decimal
-entre MatrikonOPC Explorer y UaExpert, `SourceTimestamp` idéntico al milisegundo,
-y `ServerTimestamp` ~370 ms posterior — la separación entre hora de origen y hora
-de registro, que es el criterio de "listo" de la fase.
-
-**Por qué importa metodológicamente.** Ninguna prueba unitaria podía detectar
-esto: el driver cumplía su contrato. Es un bug que solo aparece integrando contra
-un sistema real, y el instrumento que lo acorraló fue el log en el borde exacto
-entre los dos sistemas, no el test.
+**Por qué importa metodológicamente.** Ninguna prueba unitaria del gateway podía
+detectarlo: el driver cumplía su contrato. Lo que lo acorraló fue medir el
+desfase y reconocer el número — 429,4967296 s es 2³² ticks, la firma de un error
+de signo. La instrumentación en el borde entre los dos sistemas fue el
+instrumento correcto; lo que faltó fue mirar una capa más abajo.
 
 ## Operar el simulador MatrikonOPC durante las pruebas
 

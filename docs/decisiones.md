@@ -221,10 +221,13 @@ Dos aclaraciones para no prometer de más:
 - Una versión anterior de este archivo justificaba `Device` afirmando que
   `Cache` desincronizaba valor y timestamp por varios minutos. Medido después,
   es falso: el desfase se observaba idéntico en los dos modos, así que no era
-  atribuible al origen de lectura. La causa se confirmó en la Fase 3: es el
-  simulador, que no refresca timestamps sin un cliente DA que lo mantenga
-  despierto. Ver la anomalía en
-  [operacion.md](operacion.md#sourcetimestamp-atrasado-fase-2-confirmado-en-fase-3).
+  atribuible al origen de lectura. Esa parte del diagnóstico se sostuvo.
+  Lo que no se sostuvo fue la causa que se le atribuyó después: hasta la Fase 6
+  este documento afirmaba que el desfase era del simulador, que no refrescaría
+  timestamps sin un cliente DA manteniéndolo despierto. **Es falso.** El desfase
+  es un bug de conversión de `FILETIME` en el propio SDK, y por eso aparecía
+  igual en los dos modos: ambos desembocan en el mismo conversor. Ver
+  [bug-filetime-sdk.md](bug-filetime-sdk.md).
 
 ## 14. Una duda no se publica como `Bad`
 
