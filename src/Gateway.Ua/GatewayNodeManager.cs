@@ -137,6 +137,17 @@ public class GatewayNodeManager : CustomNodeManager2
         AddDiagnosticVariable(counters, "DaConnections", DataTypeIds.Int64);
         AddDiagnosticVariable(counters, "DaDisconnections", DataTypeIds.Int64);
 
+        // Auditoria del lado UA, en la misma carpeta que los contadores DA: el
+        // que abre el diagnostico todavia no sabe de que lado esta el problema,
+        // asi que separarlos lo obligaria a adivinar antes de mirar.
+        AddDiagnosticVariable(counters, "UaSessionsCreated", DataTypeIds.Int64);
+        AddDiagnosticVariable(counters, "UaSessionsClosed", DataTypeIds.Int64);
+        AddDiagnosticVariable(counters, "UaRejectedByCertificate", DataTypeIds.Int64);
+        AddDiagnosticVariable(counters, "UaRejectedByToken", DataTypeIds.Int64);
+        AddDiagnosticVariable(counters, "UaRejectedTotal", DataTypeIds.Int64);
+        AddDiagnosticVariable(counters, "UaLastRejectionReason", DataTypeIds.String);
+        AddDiagnosticVariable(counters, "UaLastRejectionUtc", DataTypeIds.String);
+
         var performance = GetOrAddFolder(root, "Gateway.Performance", "Performance");
         AddDiagnosticVariable(performance, "LastCycleMs", DataTypeIds.Double);
         // Sello del gateway al cerrar la ultima actualizacion de cache. Va como
@@ -224,6 +235,22 @@ public class GatewayNodeManager : CustomNodeManager2
             SetDiagnostic("Counters.ReadFailures", c.ReadFailures, now);
             SetDiagnostic("Counters.DaConnections", c.DaConnections, now);
             SetDiagnostic("Counters.DaDisconnections", c.DaDisconnections, now);
+
+            var a = snapshot.Audit;
+            SetDiagnostic("Counters.UaSessionsCreated", a.SessionsCreated, now);
+            SetDiagnostic("Counters.UaSessionsClosed", a.SessionsClosed, now);
+            SetDiagnostic("Counters.UaRejectedByCertificate", a.RejectedByCertificate, now);
+            SetDiagnostic("Counters.UaRejectedByToken", a.RejectedByToken, now);
+            SetDiagnostic("Counters.UaRejectedTotal", a.RejectedTotal, now);
+            // Vacio y no "nunca" cuando no hubo rechazos: el nodo es un dato,
+            // no una frase. Que este vacio ya dice que no paso nada.
+            // Palabra explicita y no string vacio: el resto del arbol ya usa
+            // este patron (Status.LastSuccessfulCycleUtc publica "nunca"), y un
+            // "" obliga al cliente a adivinar si no hubo rechazos o si el nodo
+            // dejo de publicarse.
+            SetDiagnostic("Counters.UaLastRejectionReason", a.LastRejectionReason ?? "ninguno", now);
+            SetDiagnostic("Counters.UaLastRejectionUtc",
+                a.LastRejectionUtc?.ToString("O", CultureInfo.InvariantCulture) ?? "nunca", now);
 
             var p = snapshot.Performance;
             SetDiagnostic("Performance.LastCycleMs", p.LastCycleMs, now);

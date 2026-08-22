@@ -79,6 +79,11 @@
     <h2>Adquisición</h2>
     <div class="grid" id="perfCounters"></div>
   </div>
+  <div class="card">
+    <h2>Conexiones UA</h2>
+    <div class="grid" id="auditCounters"></div>
+    <p class="foot" id="auditDetail">—</p>
+  </div>
 </section>
 
 <section id="view-det" class="hidden">
@@ -177,6 +182,28 @@ function paint(s) {
     ["Monitored items", p.monitoredItems],
     ["Memoria", p.workingSetMb.toFixed(1) + " MB"]
   ]);
+
+  // El desglose por motivo vive solo aca y no en el address space UA: es un
+  // diccionario de largo variable, y crear nodos en runtime romperia el
+  // contrato de que el arbol UA es estable.
+  const a = s.audit;
+  cells(document.getElementById("auditCounters"), [
+    ["Sesiones abiertas", a.sessionsCreated],
+    ["Sesiones cerradas", a.sessionsClosed],
+    ["Rechazos por certificado", a.rejectedByCertificate],
+    ["Rechazos por token", a.rejectedByToken],
+    ["Rechazos totales", a.rejectedTotal]
+  ]);
+
+  // Los motivos son nombres simbolicos de StatusCode que vienen del stack UA,
+  // no del CSV, pero se escapan igual: el criterio es que nada que no haya
+  // escrito esta pagina entra al DOM sin pasar por esc().
+  const reasons = Object.entries(a.rejectionsByReason ?? {});
+  document.getElementById("auditDetail").innerHTML = reasons.length === 0
+    ? "Sin intentos rechazados desde que arrancó el gateway."
+    : reasons.sort((x, y) => y[1] - x[1])
+        .map(([r, n]) => `${esc(r)}: <span class="num">${n}</span>`).join(" · ")
+      + (a.lastRejectionUtc ? ` — último ${hhmmss(a.lastRejectionUtc)}` : "");
 }
 
 // Tres estados distintos y no dos: "todavia no hay dato" (503) no es lo mismo

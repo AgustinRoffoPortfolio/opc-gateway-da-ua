@@ -118,7 +118,13 @@ public sealed record GatewaySnapshot(
     GatewayStatus Status,
     GatewayCounters Counters,
     GatewayPerformance Performance,
-    Diagnosis Diagnosis)
+    Diagnosis Diagnosis,
+    /// <param name="Audit">
+    /// Conexiones e intentos rechazados. Va en la foto y no por un costado
+    /// porque las dos vistas tienen que ver los mismos numeros: un contador de
+    /// rechazos que discrepa entre la pagina y los nodos UA es peor que no tenerlo.
+    /// </param>
+    UaAuditSnapshot Audit)
 {
     /// Por debajo de esta fraccion de tags mudos no se afirma una causa global.
     private const double PartialDegradationThreshold = 0.05;
@@ -137,7 +143,8 @@ public sealed record GatewaySnapshot(
         TagCache cache,
         DaLinkStatus link,
         UaServerStatus ua,
-        DateTime startedUtc)
+        DateTime startedUtc,
+        UaAuditSnapshot audit)
     {
         var now = DateTime.UtcNow;
         int good = 0, uncertain = 0, bad = 0, waiting = 0, neverAnswered = 0, previouslyAnswered = 0;
@@ -199,7 +206,8 @@ public sealed record GatewaySnapshot(
             System.Diagnostics.Process.GetCurrentProcess().WorkingSet64 / 1024d / 1024d,
             link.LastCacheStampUtc);
 
-        return new GatewaySnapshot(now, status, counters, performance, Diagnose(link.State, counters));
+        return new GatewaySnapshot(now, status, counters, performance,
+            Diagnose(link.State, counters), audit);
     }
 
     /// <summary>

@@ -140,6 +140,10 @@ await serverBuilder
     .SetAutoAcceptUntrustedCertificates(options.AutoAcceptUntrustedCertificates)
     .CreateAsync();
 
+// Auditoria de conexiones UA. Se crea antes de enganchar nada para que ningun
+// evento temprano del stack encuentre la referencia sin inicializar.
+var audit = new UaAuditCounters();
+
 // El modo permisivo se avisa como Warning y no como Information a proposito:
 // un servidor que acepta cualquier certificado de cliente tiene que ser
 // incomodo de ignorar en la consola, no una linea mas entre otras nueve.
@@ -170,6 +174,41 @@ Log.Information("Diagnosticos del servidor UA: {Estado}",
 // Crea el certificado propio del servidor la primera vez que corre.
 await application.CheckApplicationInstanceCertificatesAsync(silent: true);
 
+// Huella del certificado propio, para poder descartarlo en la auditoria. Se lee
+// recien aca porque antes de esta linea puede no existir todavia.
+var ownThumbprint = applicationCertificate.Certificate?.Thumbprint;
+
+// El validador dispara este evento por cada certificado que no pasa la
+// validacion. Solo contamos: tocar e.Accept aca cambiaria la politica de
+// confianza que decide AutoAcceptUntrustedCertificates, y esa decision tiene
+// que vivir en un solo lugar.
+application.ApplicationConfiguration.CertificateValidator.CertificateValidation +=
+    (_, e) =>
+    {
+        // El evento tambien salta cuando el stack valida el certificado DEL
+        // PROPIO SERVIDOR contra la URL que mando el cliente, y esa validacion
+        // falla sin impedir la sesion. Medido: con el bind en 127.0.0.1 cada
+        // conexion exitosa dispara un BadCertificateHostNameInvalid sobre
+        // nuestro propio certificado. Contarlo reportaria un intento rechazado
+        // por cada cliente que entro sin problemas.
+        if (ownThumbprint is not null &&
+            string.Equals(e.Certificate?.Thumbprint, ownThumbprint, StringComparison.OrdinalIgnoreCase))
+            return;
+
+        // Si el modo permisivo ya lo perdono, tampoco fue un intento rechazado:
+        // la sesion se establece igual.
+        if (e.Accept) return;
+
+        var reason = e.Error is { } error
+            ? StatusCodes.GetBrowseName(error.StatusCode.Code)
+            : "Unknown";
+
+        audit.RecordRejection(RejectionCategory.Certificate, reason);
+
+        Log.Warning("Intento de conexion rechazado por certificado: {Reason} (subject {Subject})",
+            reason, e.Certificate?.Subject ?? "desconocido");
+    };
+
 // Arbol de tags: sale del CSV, no hardcodeado. Carga parcial (Fase 3): una
 // fila invalida no tira el gateway abajo, queda fuera de servicio y se
 // reporta en el log.
@@ -194,7 +233,7 @@ var cache = new TagCache(tagDefinitions, staleAfter);
 Log.Information("Degradacion por antiguedad: {Cycles} ciclos ({Ms} ms sin refresco)",
     daOptions.StaleAfterCycles, staleAfter.TotalMilliseconds);
 
-var server = new UaServer(options.NamespaceUri, tagDefinitions, cache);
+var server = new UaServer(options.NamespaceUri, tagDefinitions, cache, audit);
 await application.StartAsync(server);
 
 // El ciclo DA corre en su propio hilo y no en el timer de publicacion: COM
@@ -237,7 +276,11 @@ using var timer = new Timer(_ =>
                 cache,
                 acquisition.GetStatus(),
                 nodeManager.GetServerStatus(),
-                startedUtc);
+                startedUtc,
+                // La foto de auditoria se toma aca, en el mismo instante que el
+                // resto: si se leyera al servirla, la pagina podria mostrar un
+                // rechazo que los nodos UA todavia no vieron.
+                audit.Snapshot());
 
             // Un unico Build por ciclo alimenta las dos vistas: los nodos UA y
             // la pagina sirven el mismo objeto, no dos fotos parecidas.
