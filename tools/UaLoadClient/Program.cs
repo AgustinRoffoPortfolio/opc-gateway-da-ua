@@ -7,7 +7,9 @@ using Opc.Ua.Configuration;
 // los mismos tags, y cuenta notificaciones. Sirve para medir si N clientes
 // pidiendo lo mismo multiplican el trabajo contra el servidor DA.
 
-var endpoint = args.Length > 0 ? args[0] : "opc.tcp://localhost:4840/GatewayDaUa";
+// 127.0.0.1 y no "localhost": en Windows localhost resuelve primero a ::1 (IPv6)
+// y el gateway bindea IPv4, asi que el nombre da un rechazo que parece caida.
+var endpoint = args.Length > 0 ? args[0] : "opc.tcp://127.0.0.1:4840/GatewayDaUa";
 var clientCount = args.Length > 1 ? int.Parse(args[1], CultureInfo.InvariantCulture) : 4;
 var csvPath = args.Length > 2 ? args[2] : @"C:\Users\agust\Portfolio\scratch\tags-500.csv";
 var minutes = args.Length > 3 ? double.Parse(args[3], CultureInfo.InvariantCulture) : 5;
@@ -21,7 +23,6 @@ var tagNames = File.ReadAllLines(csvPath)
     .ToList();
 Console.WriteLine($"Tags leidos del CSV: {tagNames.Count}");
 
-// Configuracion minima de cliente: sin PKI propia, acepta el cert del gateway.
 var config = new ApplicationConfiguration
 {
     ApplicationName = "UaLoadClient",
@@ -29,32 +30,40 @@ var config = new ApplicationConfiguration
     ApplicationType = ApplicationType.Client,
     SecurityConfiguration = new SecurityConfiguration
     {
-        // Almacenes propios de la herramienta, separados del pki/ del gateway:
-        // el stack exige que esten declarados aunque no se use seguridad.
+        // PKI propia, fuera de bin/: sobrevive a dotnet clean y queda en una ruta
+        // fija que trust-setup.ps1 puede resolver en cualquier maquina.
         ApplicationCertificate = new CertificateIdentifier
         {
             StoreType = CertificateStoreType.Directory,
-            StorePath = "pki-client/own",
+            StorePath = "%LocalApplicationData%/UaLoadClient/pki/own",
             SubjectName = "CN=UaLoadClient"
         },
         TrustedIssuerCertificates = new CertificateTrustList
         {
             StoreType = CertificateStoreType.Directory,
-            StorePath = "pki-client/issuers"
+            StorePath = "%LocalApplicationData%/UaLoadClient/pki/issuers"
         },
         TrustedPeerCertificates = new CertificateTrustList
         {
             StoreType = CertificateStoreType.Directory,
-            StorePath = "pki-client/trusted"
+            StorePath = "%LocalApplicationData%/UaLoadClient/pki/trusted"
         },
         RejectedCertificateStore = new CertificateStoreIdentifier
         {
             StoreType = CertificateStoreType.Directory,
-            StorePath = "pki-client/rejected"
+            StorePath = "%LocalApplicationData%/UaLoadClient/pki/rejected"
         },
-        AutoAcceptUntrustedCertificates = true,
+        // En false a proposito: la prueba de carga tiene que ejercitar la misma
+        // validacion de confianza que enfrenta un cliente real. Con auto-accept
+        // el certificado del gateway daria igual, y no probariamos nada.
+        // La confianza se establece con tools/UaLoadClient/trust-setup.ps1.
+        AutoAcceptUntrustedCertificates = false,
         RejectSHA1SignedCertificates = false,
-        MinimumCertificateKeySize = 1024
+        // 2048 es el minimo que exige el gateway y el piso razonable hoy.
+        // Este valor manda tambien sobre la clave que se emite al crear el
+        // certificado propio: con 1024 el gateway rechaza el canal con
+        // BadCertificatePolicyCheckFailed.
+        MinimumCertificateKeySize = 2048
     },
     TransportConfigurations = new TransportConfigurationCollection(),
     TransportQuotas = new TransportQuotas { OperationTimeout = 60000 },
@@ -62,9 +71,22 @@ var config = new ApplicationConfiguration
     TraceConfiguration = new TraceConfiguration()
 };
 await config.Validate(ApplicationType.Client);
-config.CertificateValidator.AutoAcceptUntrustedCertificates = true;
 
-var selected = CoreClientUtils.SelectEndpoint(config, endpoint, useSecurity: false);
+// El stack no emite el certificado solo: hay que pedirlo explicitamente.
+// Si ya existe uno valido en el store, lo reutiliza y no vuelve a emitir.
+var appInstance = new Opc.Ua.Configuration.ApplicationInstance(config);
+bool certOk = await appInstance.CheckApplicationInstanceCertificatesAsync(
+    silent: true);
+if (!certOk)
+{
+    throw new InvalidOperationException(
+        "No se pudo emitir ni validar el certificado de aplicacion del UaLoadClient.");
+}
+
+// useSecurity: true -> elige el endpoint mas seguro que ofrezca el gateway
+// (SignAndEncrypt / Basic256Sha256), no el None que la Fase 7 apago.
+var selected = CoreClientUtils.SelectEndpoint(config, endpoint, useSecurity: true);
+Console.WriteLine($"Endpoint elegido: {selected.SecurityMode} / {selected.SecurityPolicyUri}");
 var endpointConfig = EndpointConfiguration.Create(config);
 var configured = new ConfiguredEndpoint(null, selected, endpointConfig);
 
