@@ -22,7 +22,9 @@ aparte:
 | [configuracion-tags.md](configuracion-tags.md) | El CSV campo por campo y la política de carga parcial |
 | [calidad-da-ua.md](calidad-da-ua.md) | La tabla de mapeo de calidad DA a StatusCode UA |
 | [verificacion.md](verificacion.md) | Qué se comprobó con los propios ojos, fase por fase |
-| [pruebas-carga.md](pruebas-carga.md) | Las mediciones de volumen, con sus límites |
+| [pruebas-carga.md](pruebas-carga.md) | Escala, memoria y soak: las corridas 1, 2 y 5 |
+| [pruebas-carga-rendimiento.md](pruebas-carga-rendimiento.md) | Múltiples clientes y latencias: las corridas 3 y 4 |
+| [pruebas-carga-como-correr.md](pruebas-carga-como-correr.md) | Cómo se arma y se corre un escenario de carga |
 | [operacion.md](operacion.md) | Cómo se levanta y qué mirar si falla |
 | [bug-filetime-sdk.md](bug-filetime-sdk.md) | El bug de conversión de `FILETIME` del SDK cliente DA, su corrección y la evidencia |
 | [glosario.md](glosario.md) | La jerga del dominio |
@@ -93,22 +95,19 @@ src/
 ├── Gateway.Da/     # cliente DA + OpcDaTagSource
 ├── Gateway.Ua/     # server core, node manager, address space
 ├── Gateway.Web/    # Kestrel + diagnóstico
-└── Gateway.Host/ # composición y arranque
+└── Gateway.Host/   # composición y arranque (x86)
 
 tools/
-└── TimestampProbe/ # experimento reproducible del bug de FILETIME
-
+├── TimestampProbe/ # experimento reproducible del bug de FILETIME
+├── UaLoadClient/   # cliente UA sintético para las pruebas de carga
+└── scripts/        # generación de tags y medición de las corridas
+```
 
 `tools/` es una desviación consciente de la estructura estándar del portfolio, que
 solo contempla `src/` y `tests/`. Un experimento reproducible no es ninguna de las
 dos cosas: no es código del producto, y no es un test porque su salida es un CSV
 para analizar, no un verde o un rojo. Vale conservarlo porque la evidencia de un
 diagnóstico se tiene que poder volver a generar, no solo leer.
-
-El grafo de referencias es deliberado: `Core` no referencia a nadie, y `Ua` no
-referencia a `Da`. Eso hace que dos reglas de arquitectura las imponga el
-compilador en vez de la disciplina personal:
-```
 
 El grafo de referencias es deliberado: `Core` no referencia a nadie, y `Ua` no
 referencia a `Da`. Eso hace que dos reglas de arquitectura las imponga el
