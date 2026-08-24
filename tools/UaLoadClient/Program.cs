@@ -11,7 +11,24 @@ using Opc.Ua.Configuration;
 // y el gateway bindea IPv4, asi que el nombre da un rechazo que parece caida.
 var endpoint = args.Length > 0 ? args[0] : "opc.tcp://127.0.0.1:4840/GatewayDaUa";
 var clientCount = args.Length > 1 ? int.Parse(args[1], CultureInfo.InvariantCulture) : 4;
-var csvPath = args.Length > 2 ? args[2] : @"C:\Users\agust\Portfolio\scratch\tags-500.csv";
+var csvPath = args.Length > 2 ? args[2] : FindDefaultCsv();
+
+// La ruta por defecto se deriva de la raiz del repo, no de una ruta
+// absoluta de una maquina. Subimos desde el directorio del ejecutable
+// hasta encontrar ".git": esa carpeta existe en cualquier clon, y la
+// profundidad de bin/<config>/<tfm> deja de importar.
+static string FindDefaultCsv()
+{
+    var dir = new DirectoryInfo(AppContext.BaseDirectory);
+    while (dir is not null && !Directory.Exists(Path.Combine(dir.FullName, ".git")))
+        dir = dir.Parent;
+
+    if (dir is null)
+        throw new InvalidOperationException(
+            "No se encontro la raiz del repo. Pasa la ruta al CSV como tercer argumento.");
+
+    return Path.Combine(dir.FullName, "scratch", "tags-500.csv");
+}
 var minutes = args.Length > 3 ? double.Parse(args[3], CultureInfo.InvariantCulture) : 5;
 const string GatewayNamespace = "http://opc-gateway-da-ua/";
 

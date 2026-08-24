@@ -48,3 +48,7 @@ config/tags.local.csv
 # --- Sistema ---
 Thumbs.db
 desktop.ini
+
+# Evidencia generada por las pruebas de carga (CSV de tags y aliases).
+# Se regenera con tools/Generate-LoadTestTags.ps1, no se versiona.
+scratch/

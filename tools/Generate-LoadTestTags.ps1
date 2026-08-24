@@ -9,7 +9,7 @@
 param(
     [int]$TagCount = 8000,
     [int]$ScanRateMs = 1000,
-    [string]$OutputDir = (Join-Path $PSScriptRoot '..\..\scratch')
+    [string]$OutputDir = (Join-Path $PSScriptRoot '..\scratch')
 )
 
 # Tabla de roles: NOMBRE|TIPO|EU|MULTIPLICADOR|OFFSET
@@ -99,7 +99,13 @@ for ($device = 1; $device -le $deviceCount -and $emitted -lt $TagCount; $device+
     }
 }
 
-$resolvedDir = (Resolve-Path $OutputDir).Path
+# El directorio puede no existir en un clon recien hecho, y Resolve-Path
+# falla si no esta. La API de .NET lo crea si falta, no hace nada si ya
+# existe, y devuelve la ruta normalizada (sin el ".." del medio).
+# Path.Combine deja pasar $OutputDir tal cual si es absoluta, y la ancla
+# a la ubicacion actual si el usuario paso una relativa.
+$resolvedDir = [System.IO.Directory]::CreateDirectory(
+    [System.IO.Path]::Combine($PWD.ProviderPath, $OutputDir)).FullName
 $uaPath = Join-Path $resolvedDir "tags-$TagCount.csv"
 $daPath = Join-Path $resolvedDir "aliases-$TagCount.csv"
 
