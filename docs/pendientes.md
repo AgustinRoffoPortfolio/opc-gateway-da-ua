@@ -48,22 +48,6 @@ el gateway al CSV generado. Documentado en
 
 ## Higiene
 
-### Certificados huerfanos en las PKI
-
-Ninguno molesta funcionalmente: la validacion se hace contra el que
-presenta el cliente. Es higiene — un certificado inservible en el almacen
-de confiados es lo que uno no quiere encontrar al auditar.
-
-- `pki/trusted/certs/`: el `.der` del UaLoadClient de 1024 bits
-  (`51703DEF...`), inservible desde que se subio a 2048.
-- `pki/rejected/certs/`: el mismo `51703DEF...` y uno viejo de UaExpert.
-- PKI del cliente (`%LocalAppData%\UaLoadClient\pki\trusted\certs`): el
-  certificado viejo del gateway (`2457AC8C...`), que quedo al regenerarlo.
-  `trust-setup.ps1` copia el nuevo pero no limpia el anterior.
-
-Borrar con `-LiteralPath`: los nombres llevan corchetes, que PowerShell
-interpreta como comodines.
-
 ## Mantenimiento
 
 ### Ocho advertencias CS0618 en UaLoadClient
