@@ -184,6 +184,48 @@ pudiera desmentirla, y esa recién llegó en la Fase 6.
 Tests: 54/54.
 
 
+## Fase 6 — carga y validación · **alcance recortado**
+
+Las mediciones de volumen —escalones, memoria, latencias y soak— viven en
+[`pruebas-carga.md`](pruebas-carga.md) con sus límites declarados. Acá queda lo que
+es verificación y no medición: una anomalía del stack UA que apareció solo en el
+escalón de 8.000, y qué se comprobó sobre su severidad.
+
+### La anomalía `Oops!`, medida por su efecto en el cliente
+
+Durante la corrida de 8.000 tags el gateway registró `Oops! MonitoredItems queued
+but no notifications available` a nivel ERROR, cinco veces en 39 minutos y sin
+patrón regular. No apareció en los escalones de 500 ni 4.000, y la primera
+ocurrencia coincide con el salto de 40 a 800 tags suscriptos.
+
+El mensaje **no es del gateway**: sale de `Opc.Ua.Server`, el lado servidor del
+stack de la OPC Foundation. Al armar el `NotificationMessage`, la suscripción tiene
+MonitoredItems marcados como listos para publicar pero la lista de notificaciones
+sale vacía; el servidor descarta ese mensaje y sigue. El `Oops!` es el comentario
+literal de los autores para un caso que consideran que no debería ocurrir.
+
+**Qué se verificó con los propios ojos.** Se habilitaron los nodos de diagnóstico
+(`ServerDiagnostics`), se reprodujo el escenario de 8.000 con 800 suscriptos y se
+dejó correr con el panel de log de UaExpert vaciado hasta capturar una ocurrencia.
+El cliente no registró ningún evento: ni número de secuencia salteado, ni
+republish, ni keep-alive fallido, y los valores siguieron llegando frescos. **No
+hay pérdida de datos observable por el cliente.**
+
+Lo que esto **no** demuestra: que el servidor esté internamente correcto —se probó
+comportamiento observable, no corrección interna del stack—, ni que no se saltee
+alguna muestra intermedia. UaExpert suscribe con `QueueSize=1, DiscardOldest=1`, o
+sea que pide solo el último valor: aunque se perdiera una muestra intermedia no lo
+notaría. Para un gateway que expone estado actual eso es aceptable; para un cliente
+que historice con colas más grandes, la pregunta habría que rehacerla.
+
+**Causa probable.** `GatewayNodeManager.UpdateValues` escribe los 8.000 nodos en
+cada ciclo y llama a `ClearChangeMasks` en todos, sin comparar contra el valor
+anterior. Con la fuente `Random` los 8.000 cambian siempre: es el escenario de
+máxima actividad de notificación por nodo. Un dirty-check lo reduciría, pero **no
+puede medirse con esta configuración**, justamente porque acá todos los valores
+cambian en cada ciclo. Queda como optimización pendiente, no como corrección de un
+bug.
+
 ## Fase 7 — seguridad y entrega · **en curso**
 
 Sección abierta, a diferencia del resto: la fase no está cerrada. Recoge lo

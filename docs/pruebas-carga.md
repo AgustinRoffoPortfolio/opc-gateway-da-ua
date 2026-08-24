@@ -1,7 +1,57 @@
-# Pruebas de carga
+# Pruebas de carga — escala, memoria y soak
 
-Mediciones de volumen del gateway. Cada corrida agrega filas a la tabla de
-resultados; este documento no se reemplaza, se extiende.
+Mediciones de volumen del gateway: cuántos tags sostiene, cuánta memoria consume y
+si pierde recursos con el tiempo.
+
+Las corridas que miden **rendimiento** —el aislamiento que da la cache y las
+latencias de punta a punta— están en
+[`pruebas-carga-rendimiento.md`](pruebas-carga-rendimiento.md). La numeración de
+corridas es global a los dos documentos y es cronológica, así que acá aparecen la
+1, la 2 y la 5, y allá la 3 y la 4. Los números no se reordenan: otros documentos
+las citan así.
+
+## Números a citar
+
+| Qué | Valor | Corrida |
+|---|---|---|
+| Tags sostenidos de punta a punta | 8.000, sin errores, arranque < 1 s | 1 |
+| Memoria con 8.000 tags | ~70-75 MB de Private Bytes | 2 |
+| Memoria con 500 tags | 51,9-54,1 MB de Private Bytes | 5 |
+| Fuga en 2 h de soak | ninguna, sin pendiente | 5 |
+
+**Siempre Private Bytes, nunca Working Set.** Working Set es memoria física mapeada
+y Windows la recorta por su cuenta: osciló ±25 MB sin que el gateway hiciera nada
+(corrida 2). Private Bytes es memoria comprometida por el proceso y nadie de afuera
+la toca.
+
+Dos aclaraciones que hay que hacer al citar estos números: los **8.000 aliases se
+alimentan de 4 ItemID de origen** —es el peor caso para el lado UA, pero no son
+8.000 señales independientes—, y la **CPU es presupuesto compartido** con el
+servidor DA, que corre en la misma máquina.
+
+## Nota transversal — el desfasaje de `SourceTimestamp`
+
+Todas las corridas de este documento y del de rendimiento se hicieron mientras el
+`SourceTimestamp` llegaba a UaExpert desfasado ~7 minutos de forma intermitente, y
+mientras ese desfasaje se atribuía —incorrectamente— al simulador de Matrikon. La
+causa real se identificó el 21/08/2026: un error de conversión de `FILETIME` en el
+SDK cliente DA. La aritmética, la evidencia y la corrección están en
+[`bug-filetime-sdk.md`](bug-filetime-sdk.md) y no se repiten acá.
+
+**Qué implica para estos números: nada.** Ninguna medición usa `SourceTimestamp`
+como instrumento. El tramo DA→cache se cronometra con `Stopwatch` dentro del ciclo
+de adquisición, el tramo cache→cliente usa un nodo sonda contra el reloj de la
+máquina, y la degradación por antigüedad se calcula con `LastUpdateUtc`. La
+condición "configurador de MatrikonOPC abierto" que figura en las corridas 2, 3 y 4
+se eligió por una hipótesis falsa, pero no tuvo efecto sobre ningún resultado
+publicado: los instrumentos ya eran independientes del timestamp de origen.
+
+Queda anotado porque el error de método es material de entrevista: la hipótesis se
+sostenía en una única observación —al abrir el explorador de Matrikon para
+comparar, el desfase desaparecía— leída como "el observador altera lo que mide".
+Los datos para descartarla ya estaban en la corrida 1: el desfase alternaba entre
+ciclos consecutivos y siempre valía el mismo número. Lo que faltó no fue mirar más,
+fue medir y reconocer el número.
 
 ## Corrida 1 — 14/08/2026 — Escalones 500 / 4.000 / 8.000
 
@@ -33,10 +83,8 @@ Los separadores difieren porque Matrikon rechaza puntos, comas y `#` en el
 nombre de un alias: en OPC DA el punto es el separador de jerarquía del ItemID y
 un alias con puntos sería ambiguo para el servidor. El punto inicial existe
 porque el alias vive en el grupo raíz, así que el separador de jerarquía queda
-huérfano adelante.
-
-Que los dos nombres difieran es precisamente para lo que existe la columna de
-mapeo del CSV.
+huérfano adelante. Que los dos nombres difieran es precisamente para lo que existe
+la columna de mapeo del CSV.
 
 - 200 equipos numerados globalmente (`EQUIPO_001` a `EQUIPO_200`).
 - Planta derivada del número de equipo, 20 equipos por planta.
@@ -98,6 +146,10 @@ durante toda la corrida:
 | Inicio | 72,7 MB | 0,6 MB |
 | +33 min | 73,2 MB | 1,0 MB |
 
+Estos números son Working Set y se midieron con los diagnósticos del servidor
+deshabilitados. La corrida 2 los revisa con la métrica correcta y confirma que
+caen dentro del rango esperado.
+
 Import de aliases en Matrikon: 500 casi instantáneo, 4.000 en 2-3 segundos,
 8.000 sin cronometrar pero del mismo orden. El simulador no es el cuello de
 botella.
@@ -135,7 +187,13 @@ correcta bajo carga:
   item y no estampa todo con la hora del ciclo, que es el comportamiento que el
   proyecto se propone garantizar.
 
-## Limitaciones de esta corrida
+El escalón de 8.000 destapó además una anomalía del stack UA de la OPC Foundation
+(`Oops! MonitoredItems queued but no notifications available`), que se investigó y
+se midió por su efecto en el cliente. Está en
+[`verificacion.md`](verificacion.md), sección de Fase 6: es un hallazgo de
+verificación, no una medición de volumen.
+
+### Limitaciones de esta corrida
 
 Lo que esta medición **no** demuestra:
 
@@ -148,119 +206,23 @@ Lo que esta medición **no** demuestra:
 - **No ejercita el dirty-check.** Como todos los valores cambian en cada ciclo,
   un filtro de "solo publicar lo que cambió" no descartaría nada y no quedaría
   medido. El escenario de variación parcial (usando la rama estática
-  `Bucket Brigade`) queda pendiente para Fase 6.
-- **Un solo cliente UA.** El escenario de múltiples clientes simultáneos, que es
-  parte del sentido de tener una cache en el medio, no se midió.
-- **Soak corto.** 33 minutos detectan una fuga grosera. Los soaks de 8 y 24 h del
-  roadmap son otra cosa.
-- **Sin latencia medida.** No se instrumentaron las latencias DA→cache ni
-  cache→cliente UA; solo consumo de recursos y corrección funcional.
+  `Bucket Brigade`) quedó **fuera del alcance** de la Fase 6, recortado
+  deliberadamente.
+- **Un solo cliente UA.** Se midió después: ver la corrida 3 en
+  [`pruebas-carga-rendimiento.md`](pruebas-carga-rendimiento.md).
+- **Soak corto.** 33 minutos detectan una fuga grosera. La corrida 5 lo extiende a
+  2 h; los soaks de 8 y 24 h del roadmap original se recortaron.
+- **Sin latencia medida.** Se midió después: ver la corrida 4 en
+  [`pruebas-carga-rendimiento.md`](pruebas-carga-rendimiento.md).
 - **CPU compartida.** El gateway comparte máquina con el servidor DA. Los
   números de CPU son de presupuesto compartido, no propio.
 - **Escalón de 500 sin memoria medida.**
-
-## Asuntos abiertos
-
-**`Oops! MonitoredItems queued but no notifications available` — cosmético.**
-Durante la corrida de 8.000 el gateway registró este mensaje a nivel ERROR cinco
-veces en 39 minutos, sin patrón regular. No apareció en los escalones de 500 ni
-4.000, y la primera ocurrencia coincide con el salto de 40 a 800 tags
-suscriptos.
-
-El mensaje viene del lado servidor del stack de la OPC Foundation
-(`Opc.Ua.Server`), no del código del gateway: al armar el `NotificationMessage`,
-la suscripción tiene MonitoredItems marcados como listos para publicar pero la
-lista de notificaciones sale vacía. El servidor descarta ese mensaje vacío y
-sigue. El "Oops!" es el comentario literal de los autores para un caso que
-consideran que no debería ocurrir.
-
-Severidad medida: se habilitaron los nodos de diagnóstico del servidor
-(`ServerDiagnostics`) y se reprodujo el escenario de 8.000 con 800 suscriptos.
-Con el panel de log de UaExpert vaciado, se dejó correr hasta capturar una
-ocurrencia del mensaje. **El cliente no registró ningún evento**: ni número de
-secuencia salteado, ni republish, ni keep-alive fallido, y los valores siguieron
-llegando frescos. Conclusión: no hay pérdida de datos observable por el cliente.
-
-Lo que esta verificación **no** demuestra:
-
-- Que el servidor esté internamente correcto. Se probó comportamiento
-  observable, no corrección interna del stack.
-- Que no se saltee ninguna muestra intermedia. UaExpert suscribe con
-  `QueueSize=1, DiscardOldest=1`, o sea que pide solo el último valor: aunque se
-  perdiera una muestra intermedia no lo notaría. Para un gateway que expone
-  estado actual eso es aceptable; para un cliente que historice con colas más
-  grandes, la pregunta habría que rehacerla.
-
-Causa probable: `GatewayNodeManager.UpdateValues` escribe los 8.000 nodos en
-cada ciclo y llama a `ClearChangeMasks` en todos, sin comparar contra el valor
-anterior. Con la fuente `Random` los 8.000 cambian siempre, así que es el
-escenario de máxima actividad de notificación por nodo. Un dirty-check —no
-notificar cuando el estado no cambió— reduciría esa actividad, pero **no puede
-medirse con esta configuración**, justamente porque acá todos los valores
-cambian en cada ciclo. Queda anotado como optimización pendiente, no como
-corrección de un bug.
-
-**Nota sobre la configuración — resuelto en la corrida 2.** Los números de esta
-tabla se midieron con los diagnósticos del servidor **deshabilitados** (el default
-del stack). Se habilitaron después y quedaron habilitados en el código, así que
-esta nota advertía que una corrida futura no sería directamente comparable, y
-señalaba como evidencia los 148,7 MB medidos en Fase 5 contra los 72,7 MB de acá.
-
-La corrida 2 midió las dos configuraciones en la misma sesión y **la advertencia
-resultó equivocada**: el costo de los diagnósticos es de 4,2 MB (5,6%), dentro del
-ruido de la medición. Lo que fallaba era la métrica, no la configuración —Working
-Set oscila ±25 MB solo, por el recorte del sistema operativo. Los 72,7 MB de esta
-tabla caen dentro del rango observado para esa misma configuración; los 148,7 MB
-de Fase 5 no se reprodujeron. Ver [Corrida 2](#corrida-2--18082026--memoria-dos-configuraciones-en-la-misma-sesión).
-
-**Desfasaje del SourceTimestamp (~7 min) — RESUELTO en Fase 6: era un bug del SDK
-cliente DA.** Durante esta corrida el `SourceTimestamp` que llegaba a UaExpert
-estaba desfasado 7 minutos y 9,5 segundos respecto del `ServerTimestamp`, de forma
-intermitente. La causa real, identificada el 21/08/2026, es un error de conversión
-de `FILETIME` en `TitaniumAS.Opc.Client`: recompone los dos campos de 32 bits sin
-enmascarar el campo bajo, que en .NET está declarado con signo, y cuando el bit 31
-está prendido el resultado sale 2³² ticks abajo — 429,4967296 s exactos. Ese bit
-alterna cada ~3 min 35 s, y de ahí la intermitencia. La aritmética completa, la
-evidencia medida y la corrección están en
-[`bug-filetime-sdk.md`](bug-filetime-sdk.md).
-
-Lo que decía este asunto hasta el 22/08/2026 —que la culpa era del simulador, que no
-refrescaría los timestamps sin un segundo cliente DA conectado— **es falso**, y vale
-la pena dejar anotado por qué se creyó. La hipótesis se apoyaba en una única
-observación: al abrir MatrikonOPC Explorer para comparar, el desfase desaparecía. Se
-la leyó como "el observador altera lo que mide", que es una explicación elegante y
-encaja con la intuición. Bajo el mecanismo real fue una coincidencia con un borde de
-bloque de ~3 min 35 s. Los datos para descartarla ya estaban acá: el desfase
-alternaba entre ciclos consecutivos y siempre valía el mismo número. Lo que faltó no
-fue mirar más, fue medir y reconocer el número.
-
-Consecuencia para el material de demo: la recomendación anterior era dejar el
-configurador **cerrado** para que el desfase se viera, argumentando que hacía visible
-que `SourceTimestamp` y `ServerTimestamp` son dos relojes distintos. Eso sería grabar
-el bug. Con la corrección aplicada, la demo correcta muestra el `SourceTimestamp`
-pegado al reloj del servidor DA y el `ServerTimestamp` unos cientos de milisegundos
-después — que es la diferencia real entre los dos relojes, y es de milisegundos, no
-de minutos.
-
-Eso último era justamente la pista, leída al revés. Durante la Fase 5 se observó
-que **con el configurador de MatrikonOPC abierto el desfase desaparece** y los dos
-timestamps coinciden al segundo. O sea que el simulador no refresca los timestamps
-de sus items cuando el gateway es su único cliente leyendo por `Cache`; basta con
-que se conecte cualquier otro cliente DA para que se normalicen. Por eso el
-cliente de Matrikon mostraba hora actual: al abrirlo para comparar, se alteraba lo
-que se estaba midiendo.
-
-Es una anomalía del simulador y no del gateway. El detalle y cómo reproducirla
-están en [operacion.md](operacion.md). Tiene una consecuencia práctica para grabar
-material de demo: conviene dejar el configurador **cerrado**, porque el desfase es
-exactamente lo que hace visible que `SourceTimestamp` y `ServerTimestamp` son dos
-relojes distintos.
 
 ## Corrida 2 — 18/08/2026 — Memoria: dos configuraciones en la misma sesión
 
 ### Objetivo
 
-Cerrar el asunto abierto de la corrida 1: el mismo escalón de 8.000 tags había
+Cerrar una discrepancia de la corrida 1: el mismo escalón de 8.000 tags había
 medido 72,7 MB el 14/08 y 148,7 MB durante la Fase 5. Las dos corridas diferían
 en dos cosas a la vez (la página de diagnóstico sirviendo y los
 `ServerDiagnostics` del stack habilitados) y había una sola medición de cada
@@ -315,7 +277,7 @@ diagnósticos deshabilitados, o sea la configuración de la corrida B, cuyo Work
 Set fue de 62,5 a 116,1 MB. El número cae dentro del rango.
 
 **Los 148,7 MB de Fase 5 no encajan del todo**, y se anota sin maquillar: quedan
-por encima del máximo de Working Set observado hoy en cualquiera de las dos
+por encima del máximo de Working Set observado en cualquiera de las dos
 configuraciones (124,1 MB). La explicación más probable es que se haya medido
 temprano, en el pico de asentamiento —donde el Working Set está en su punto más
 alto—, o con un cliente UA conectado. No se reprodujo, así que queda como
@@ -333,249 +295,18 @@ una fuga grosera.
 **~70-75 MB de Private Bytes para 8.000 tags**, independientemente de si los
 diagnósticos están habilitados. No citar Working Set como consumo del gateway.
 
-## Corrida 3 — 19/08/2026 — Múltiples clientes UA sobre los mismos tags
-
-### Objetivo
-
-Medir la afirmación central del diseño: la cache existe para que N clientes UA
-pidiendo los mismos datos no se traduzcan en N veces el trabajo contra el
-servidor DA legado. Estaba escrito en `arquitectura.md` como decisión, nunca
-medido.
-
-### Diseño del experimento
-
-Se eligió el escalón de **500 tags** y no el de 8.000, y **los mismos 500 tags en
-todos los clientes**. El motivo es aislar la variable: con 8.000 de fondo, el
-gateway estaría haciendo un trabajo pesado ajeno al experimento, y con
-subconjuntos distintos por cliente se estaría midiendo cantidad de
-MonitoredItems en lugar de cantidad de clientes. La pregunta que se quiso
-contestar es estrictamente "¿cuatro clientes preguntando exactamente lo mismo
-multiplican la carga sobre el DA?".
-
-La medición no necesitó instrumentación nueva: el contador `ReadCycles` ya
-existía en `GatewaySnapshot` y se expone en `/api/diagnostics`.
-
-### Herramienta: `tools/UaLoadClient`
-
-Proyecto de consola **fuera de la solución** (no lo compila `dotnet build` de la
-raíz), que abre N sesiones UA independientes contra el gateway, cada una con su
-suscripción a los mismos tags, y cuenta las notificaciones recibidas por sesión.
-Contar notificaciones no es decorativo: distingue un cliente que está recibiendo
-datos de uno que solo está conectado.
-
-Resuelve el índice del namespace **por URI** (`http://opc-gateway-da-ua/`) en vez
-de hardcodear `ns=2`, que se rompería apenas cambie el orden de registro en el
-servidor. Los NodeId de tag son el nombre completo del CSV
-(`GatewayNodeManager.cs:319`).
-
-Se ejecuta así:
-
-```powershell
-dotnet run --project tools\UaLoadClient -- opc.tcp://localhost:4840/GatewayDaUa 4 "ruta\tags-500.csv" 5
-```
-
-(endpoint · cantidad de clientes · CSV · minutos)
-
-### Método de medición
-
-Las dos ventanas se midieron igual: marca de `readCycles` **con timestamp** al
-inicio y al final, y se compara la **tasa** (ciclos por segundo), no el total.
-Un primer intento comparó totales y quedó sesgado porque los segundos que pasan
-entre arrancar el cliente y tomar la marca no son los mismos en cada corrida;
-comparar tasas cancela ese desfasaje.
-
-Condiciones: 500 tags, `Da:UpdateRateMs = 1000`, diagnósticos y página web
-habilitados, configurador de MatrikonOPC **abierto** (ver nota al final),
-ventanas de 5 minutos, todo en la misma sesión sin reiniciar el gateway entre
-ventanas.
-
-### Resultados
-
-| Métrica | 1 cliente | 4 clientes | Factor |
-|---|---|---|---|
-| Ciclos DA | 297 en 300,2 s | 295 en 299,0 s | — |
-| **Tasa de lectura DA** | **0,989 /s** | **0,987 /s** | **×1,00** |
-| Notificaciones UA recibidas | 110.100 | 480.268 | ×4,36 |
-| Private Bytes (media) | 57,1 MB | 57,2 MB | ×1,00 |
-| Working Set (media) | 64,0 MB | 65,2 MB | ×1,02 |
-| Handles (media) | 668 | 671 | ×1,00 |
-
-Reparto por cliente en la ventana de 4: 110.180 / 127.760 / 121.268 / 121.060.
-Ningún cliente quedó servido de menos: cada uno recibió aproximadamente lo mismo
-que recibía el cliente solo.
-
-Las medias de memoria y handles salen de una corrida aparte de 5 minutos por
-configuración (`memoria-clientes1.csv`, `memoria-clientes4.csv`), con los
-clientes conectados durante toda la ventana de muestreo.
-
-### Lectura de los resultados
-
-**La cache hace lo que promete.** La tasa de lectura contra el DA es idéntica con
-1 y con 4 clientes: 0,2% de diferencia, dentro del ruido. El gateway lee el
-servidor legado a su propio ritmo configurado y los clientes UA se sirven de la
-cache, sin llegar nunca al DA. Es el resultado que justifica la decisión de
-diseño de `arquitectura.md`.
-
-**El costo del lado UA es real pero barato.** Las notificaciones se multiplicaron
-por 4,36 mientras la memoria del proceso no se movió (0,1 MB) y los handles
-subieron 3. Cuatro sesiones con 500 MonitoredItems cada una son 2.000 items
-monitoreados y el gateway ni se inmuta.
-
-**0,987 ciclos/s es prácticamente el 1 Hz configurado**, o sea que el trabajo por
-ciclo (leer, escalar, cachear y publicar 500 tags) es despreciable frente al
-intervalo de 1 segundo.
-
-**Estabilidad de memoria con 500 tags.** Private Bytes se mantuvo entre 57,0 y
-57,5 MB en las dos ventanas — prácticamente inmóvil, muy distinto del rango de
-65-87 MB con 8.000 tags. Refuerza la conclusión de la corrida 2: esa oscilación
-era el asentamiento del heap bajo carga alta, no memoria que el gateway soltara.
-
-### Limitaciones de esta corrida
-
-- **Cuatro clientes, no cuarenta.** Se demostró que la carga DA es independiente
-  de la cantidad de clientes en el rango probado, no dónde está el techo del
-  lado UA.
-- **Clientes en la misma máquina.** Comparten CPU con el gateway y el servidor
-  DA. No hay red de por medio.
-- **Los clientes solo escuchan.** No hacen browse, ni lecturas puntuales, ni
-  reconexiones. Es el caso de uso de suscripción sostenida.
-- **Notificaciones al 86-88% del teórico.** 110.100 recibidas contra 500 × 297 =
-  148.500 posibles. Sugiere que con el escenario de 500 no todos los tags cambian
-  en todos los ciclos, a diferencia del de 8.000 donde todos vienen de la rama
-  `Random`. No se investigó, pero es una pista para el escenario de variación
-  parcial que quedó pendiente de la corrida 1.
-
-### Nota sobre el configurador de MatrikonOPC
-
-Estas corridas —y también las de la corrida 2— se hicieron con el **configurador
-de MatrikonOPC abierto**. Se lo dejaba abierto por la hipótesis, hoy descartada, de
-que un segundo cliente DA "normalizaba" los timestamps del simulador. La causa real
-del desfasaje era un bug del SDK cliente DA, no el simulador: ver el cierre al final
-de este documento y [`bug-filetime-sdk.md`](bug-filetime-sdk.md).
-
-Para las mediciones de esta corrida la condición es indistinta —se compara tasa de
-ciclos, no timestamps—, así que los resultados valen igual. Para grabar la demo, la
-recomendación quedó **al revés** de lo que decía esta nota: con el bug corregido, el
-`SourceTimestamp` es correcto siempre, sin depender de quién más esté conectado.
-
-
-## Corrida 4 — 19/08/2026 — Latencias DA→cache y cache→cliente
-
-### Objetivo
-
-Cerrar el ítem 3 de la Fase 6, obligatorio para el reporte de cierre (§B9): cuánto
-tarda un dato desde que el driver lo lee hasta que un cliente UA lo recibe.
-
-Son dos tramos con naturaleza distinta y se miden con instrumentos distintos.
-
-### Tramo DA→cache: ya estaba medido
-
-El ciclo de adquisición (`DaAcquisitionService.Run`) cronometra desde antes de
-`source.ReadAll()` hasta después de `_cache.Update(...)`, que es exactamente la
-definición del tramo. Sale por `/api/diagnostics` como `lastCycleMs`, `avgCycleMs`
-y `maxCycleMs`.
-
-Lo único que se corrigió fue el instrumento: medía restando `DateTime.UtcNow`, que
-en Windows avanza a saltos de ~15,6 ms. Los microsegundos que reportaba eran
-precisión aparente — un ciclo de 6 ms solo podía dar 0 o 15.600 µs. Se pasó a
-`Stopwatch`, que usa el contador de alta resolución del procesador.
-
-### Tramo cache→cliente: la sonda
-
-Cruza dos procesos, así que un `Stopwatch` no sirve. Tampoco sirve el
-`ServerTimestamp`: lo estampa el stack UA en el momento del sampling, no cuando la
-cache se actualizó, así que restarlo desde el cliente mediría casi cero.
-
-La solución es un nodo sonda, `Gateway.Performance.CacheStampUtc`, cuyo *valor* es
-la hora del gateway sellada en el hilo DA justo después de que la cache quedó
-actualizada. Como los dos procesos comparten el reloj de la máquina, el cliente
-calcula `UtcNow − sello` al recibir la notificación y obtiene la latencia real.
-
-**Por qué no se tocó la semántica de timestamps para medir esto:** `node.Timestamp`
-sigue siendo el `SourceTimestamp` del servidor DA, que es la tesis del proyecto. La
-sonda es un nodo de diagnóstico aparte y no interfiere con los tags.
-
-El sello viaja por el camino que ya existía: `DaLinkStatus` → `GatewaySnapshot` →
-`GatewayPerformance` → nodo UA y página web. Sale como string ISO-8601 con cultura
-invariante, no como `DateTime`, para que el cliente lo parsee sin depender de cómo
-el stack convierta el tipo fecha.
-
-### La sonda necesita su propia suscripción
-
-Primer intento: la sonda compartía la suscripción de los 500 tags, con
-`PublishingInterval` de 1000 ms. Resultado inflado — media 1098 ms, rango de 551 a
-1569. Ese ancho de ~1000 ms exactos era la cola de publicación del propio cliente,
-no latencia del gateway.
-
-Con suscripción propia a 100 ms de publishing, la medición queda limpia. La
-suscripción de los 500 tags se deja en 1000 ms a propósito: es la carga que se está
-midiendo y cambiarla falsearía el conteo de notificaciones de la corrida 3.
-
-### Configuración de la corrida
-
-- 500 tags (`carga-500.opcsim.xml`), 1 cliente UA, 5 minutos.
-- `UpdateIntervalMs` (publicación UA) 1000 · `UpdateRateMs` (lectura DA) 1000.
-- Sonda: suscripción propia, publishing 100 ms, sampling 100 ms.
-- `monitoredItems: 501` — los 500 tags más la sonda, en dos suscripciones.
-- Configurador de MatrikonOPC abierto sin monitoreo activo (`Clients: 1`).
-
-### Resultados
-
-| Tramo | Métrica | Valor |
-|---|---|---|
-| DA→cache | media | 6,2 ms |
-| | máx | 24,9 ms |
-| cache→cliente | mín | 26,4 ms |
-| | media | 537,3 ms |
-| | p50 | 497,6 ms |
-| | p95 | 1025,7 ms |
-| | máx | 1111,2 ms |
-
-297 muestras de latencia. 106.345 notificaciones recibidas por el cliente.
-
-`avgCycleMs` pasó de 6,23 a 6,20 durante los 5 minutos con el cliente conectado, y
-`maxCycleMs` quedó en 24,86 (valor previo a la corrida): la carga UA no degradó el
-ciclo DA. Es evidencia adicional para la conclusión de la corrida 3.
-
-### Lectura de los resultados
-
-**La latencia cache→cliente no es costo de procesamiento, es espera de reloj.** El
-dato ya está en la cache; lo que tarda es el próximo tick del timer de publicación.
-Media 537 y mediana 498 sobre un ciclo de 1000 ms es una distribución uniforme: el
-valor puede caer en cualquier punto del ciclo. El mínimo de 26 ms es el caso donde
-el sello se escribió justo antes del tick.
-
-**El trabajo real del gateway es dos órdenes de magnitud menor que esa espera** —
-6 ms contra 537. Bajar `UpdateIntervalMs` reduce la latencia a costa de CPU: es una
-palanca de configuración, no un límite del diseño.
-
-### Limitaciones de esta corrida
-
-- **La sonda es un nodo solo.** Mide el camino de publicación pero no compite con
-  los otros 500 en la cola de notificación. Es una cota inferior, no el peor caso.
-- **No se midió con 8.000 tags.** El tramo DA→cache sí escala con la cantidad
-  (corrida 1), pero la latencia cache→cliente con carga alta queda sin medir.
-- **Un solo cliente.** No se midió si la latencia se degrada con 4 clientes.
-
-### Nota sobre el desfasaje de `SourceTimestamp`
-
-Durante esta corrida el desfasaje seguía sin explicación y se lo atribuía al
-simulador. La causa real —un bug del SDK cliente DA— se identificó recién el
-21/08/2026: ver el cierre al final de este documento y
-[`bug-filetime-sdk.md`](bug-filetime-sdk.md). No afecta a las latencias medidas acá,
-que no usan `SourceTimestamp` como instrumento.
-
-## Corrida 5 — Soak de 2 horas (ítem 4 de la Fase 6)
+## Corrida 5 — Soak de 2 horas
 
 Última medición de la Fase 6. Objetivo: detectar una fuga lenta de handles COM
 que en ventanas de 5-10 minutos no se ve. No requirió código nuevo.
 
 ### Configuración de la corrida
+
 - 500 tags (`carga-500.opcsim.xml`), 0 clientes UA, 120 minutos.
 - `UpdateIntervalMs` (publicación UA) 1000 · `UpdateRateMs` (lectura DA) 1000.
 - Muestreo cada 30 s con `tools/Measure-GatewayMemory.ps1` (240 muestras).
 - Configurador de MatrikonOPC abierto sin monitoreo activo (`Clients: 1`).
-- Suspensión de Windows desactivada durante la corrida (4 h con corriente alterna).
+- Suspensión de Windows desactivada durante la corrida.
 
 ### Resultados
 
@@ -621,6 +352,7 @@ Threads bajaron de 31 a un régimen estable de 17-19: el ThreadPool de .NET
 recortando hilos que no se usan.
 
 ### Limitaciones de esta corrida
+
 - **Dos horas, no ocho ni veinticuatro.** El alcance original de la Fase 6 pedía
   soaks más largos. Se recortó deliberadamente (ver README, sección de alcance).
   Una fuga con período mayor a 2 h no se detectaría acá.
@@ -632,41 +364,8 @@ recortando hilos que no se usan.
   demanda; dependen del recolector.
 
 ### Deuda que esta corrida confirma
+
 La liberación no determinística de RCWs es aceptable en una PoC, pero en producción
 se agregaría liberación explícita (`Marshal.ReleaseComObject` en `finally`) para
 bajar el techo de handles y hacerlo predecible. Se documenta como decisión
 consciente, no como omisión.
-
-### Cierre del tema: el desfasaje era un bug del SDK, no del simulador
-
-Las notas de las corridas 3 y 4 atribuían el desfasaje de `SourceTimestamp` al
-simulador de Matrikon y discutían bajo qué condiciones "se normalizaba". **Las dos
-estaban equivocadas.** El 21/08/2026 se identificó la causa real: un error de
-conversión de `FILETIME` en el SDK cliente DA, que restaba exactamente 2³² ticks
-(429,4967296 s) cada vez que el bit 31 del campo bajo estaba prendido. Ese bit
-alterna cada ~3 min 35 s, y de ahí la intermitencia que nunca cerró. La aritmética,
-la evidencia medida y la corrección están en
-[`bug-filetime-sdk.md`](bug-filetime-sdk.md); acá no se repiten.
-
-La observación de esta corrida —`SourceTimestamp` a ~1 s, sin desfasaje— era real,
-pero no significaba lo que parecía: cayó en un bloque con el bit apagado. La nota
-original acertó al no concluir nada de una medición puntual, aunque por la razón
-equivocada.
-
-**Qué implica para los números de este documento: nada.** Ninguna medición usa
-`SourceTimestamp` como instrumento. El tramo DA→cache se cronometra con `Stopwatch`
-dentro del ciclo de adquisición, el tramo cache→cliente usa el nodo sonda
-`Gateway.Performance.CacheStampUtc` contra el reloj de la máquina, y la degradación
-por antigüedad se calcula con `LastUpdateUtc`. La condición "configurador abierto"
-que figura en las corridas 2, 3 y 4 se eligió por una hipótesis falsa, pero no tuvo
-efecto sobre ningún resultado publicado: los instrumentos ya eran independientes del
-timestamp de origen.
-
-Esto **no confirma ni descarta** la hipótesis de Quick Client. El fenómeno ya se
-comportó de forma intermitente en corridas anteriores — apareció, desapareció y
-volvió a aparecer —, así que una observación puntual no alcanza para concluir nada.
-
-**Estado: anomalía intermitente del simulador, causa no determinada, no
-reproducible a demanda.** No afecta a las mediciones ni al diseño: la degradación
-por antigüedad se calcula con `LastUpdateUtc` (reloj del gateway), justamente para
-no depender de que el timestamp de origen sea confiable.
