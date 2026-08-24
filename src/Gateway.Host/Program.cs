@@ -64,7 +64,9 @@ var webOptions = configuration.GetSection("Web").Get<WebOptions>() ?? new WebOpt
 Log.Logger = new LoggerConfiguration()
     .MinimumLevel.Information()
     // El stack es muy verboso, y firma sus mensajes con el nombre en runtime
-    // de la clase que lo hospeda.
+    // de la clase que lo hospeda. Subir esto a Information un rato es la forma
+    // de auditar el handshake: en ese nivel el arranque imprime "Certificate
+    // Domain names", que es la lista contra la que se valida el dominio.
     .MinimumLevel.Override("Opc.Ua", Serilog.Events.LogEventLevel.Warning)
     .MinimumLevel.Override("Gateway.Ua.UaServer", Serilog.Events.LogEventLevel.Warning)
     // El ciclo de vida del host web anuncia su arranque con mensajes de
@@ -103,17 +105,20 @@ var applicationCertificate = new CertificateIdentifier
     CertificateType = ObjectTypeIds.RsaSha256ApplicationCertificateType,
     StoreType = CertificateStoreType.Directory,
     StorePath = Path.Combine(pkiRoot, "own"),
-    // Los DC= declaran los dominios del certificado. Sin ellos el stack
-    // infiere solo el hostname de la maquina y el certificado no dice nada
-    // de 127.0.0.1, que es la unica direccion por la que se lo alcanza.
-    // Con esto el SAN emitido queda con "IP=127.0.0.1" (verificado en el
-    // certificado 60AAFA32). El stack normaliza la lista al emitir: descarta
-    // "localhost" y agrega el hostname real al subject.
-    // NO alcanza para silenciar el "domain not listed" que el servidor
-    // loguea en cada conexion por IP: esa validacion compara contra otra
-    // lista, probablemente derivada del ApplicationUri (linea ~128), que
-    // sigue llevando el hostname. Sin confirmar. Ver docs.
-    SubjectName = $"CN={options.ApplicationName}, C=AR, O=Portfolio, DC=127.0.0.1, DC=localhost"
+    // Un solo DC=, y a proposito. Cuando un cliente entra por 127.0.0.1 el
+    // stack NO compara esa IP contra el certificado: la reconoce como loopback
+    // y la sustituye por el hostname de la maquina antes de comparar
+    // (CertificateValidator.FindDomain). El SAN con "IP=127.0.0.1" nunca se
+    // mira, y el dominio que hace falta es el nombre de maquina.
+    // El "DC=localhost" no queda literal: SecurityConfiguration.Validate() lo
+    // reescribe a DC={hostname} al arrancar, asi que esto es portable y no
+    // hardcodea LAPTOP-0JPRBIMI.
+    // Un segundo DC no agrega un segundo dominio: GetDomainsFromCertificate
+    // concatena todos los DC= con puntos en UNA sola cadena. Agregar
+    // "DC=127.0.0.1" producia el dominio "127.0.0.1.LAPTOP-0JPRBIMI", que no
+    // matchea nada y dejaba el warning vivo. Verificado contra el fuente del
+    // tag 1.5.378.156.
+    SubjectName = $"CN={options.ApplicationName}, C=AR, O=Portfolio, DC=localhost"
 };
 
 // A que interfaz se expone el endpoint UA tiene que ser una decision de
