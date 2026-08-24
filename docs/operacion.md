@@ -384,47 +384,59 @@ falla:
 Ninguno de estos suma a los contadores de rechazo: solo cuentan los StatusCode de
 identidad. Un número creciendo ahí sí es alguien insistiendo mal configurado.
 
-## El log dice "domain not listed" en cada conexion
+## El log decia "domain not listed" en cada conexion (resuelto)
 
-En cada conexion de un cliente por IP, el servidor loguea:
+Hasta el 24/08/2026, cada conexion de un cliente por IP dejaba estas dos
+lineas en el log del servidor:
 
-The domain 'opc.tcp://127.0.0.1:4840/GatewayDaUa' is not listed in the server certificate.
-Server - Client connects with an endpointUrl which does not match Server hostnames.
+    The domain 'opc.tcp://127.0.0.1:4840/GatewayDaUa' is not listed in the server certificate.
+    Server - Client connects with an endpointUrl which does not match Server hostnames.
 
+No bloqueaban nada, pero eran reales: el certificado del gateway no declaraba
+el dominio contra el que el stack lo comparaba. Corregido en `Program.cs`.
 
-**No bloquea nada.** El stack lo trata como error suprimible y el canal se
-abre igual, con SignAndEncrypt y validacion de certificado de cliente
-activa. Verificado con `tools/UaLoadClient`.
+**Que pasaba.** Las dos lineas son el mismo chequeo, no dos: `CreateSession`
+valida el certificado del propio servidor contra la URL que mando el cliente
+y, si falla con `BadCertificateHostNameInvalid`, loguea las dos seguidas. Y
+esa comparacion tiene dos comportamientos que la intuicion no anticipa,
+ambos verificados contra el fuente del tag `1.5.378.156`:
 
-El certificado del gateway **si** declara la IP: el `SubjectName` en
-`Program.cs` incluye `DC=127.0.0.1`, y el SAN emitido tiene la entrada
-`IP=127.0.0.1`. Se puede comprobar sobre el `.der` de `pki/own/certs/`:
+1. `CertificateValidator.FindDomain` **descarta la IP** cuando el cliente
+   entra por loopback: reconoce `127.0.0.1` como tal y la sustituye por
+   `Utils.GetHostName()` y el FQDN antes de comparar. El SAN con
+   `IP=127.0.0.1` nunca llega a mirarse. El dominio que hace falta es el
+   nombre de la maquina.
+2. `X509Utils.GetDomainsFromCertificate` **concatena todos los `DC=` del
+   subject con puntos en una sola cadena**. El subject declaraba
+   `DC=127.0.0.1, DC=localhost` —que el stack reescribe a
+   `DC=127.0.0.1, DC=laptop-0jprbimi` al arrancar— y de ahi salia el unico
+   dominio `127.0.0.1.LAPTOP-0JPRBIMI`, que no matchea nada. El hostname
+   correcto ya estaba en el certificado; estaba pegado a la IP.
 
-```powershell
-$p = (Get-ChildItem -LiteralPath .\pki\own\certs\ -File)[0].FullName
-$c = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($p)
-$c.Subject
-$c.Extensions | Where-Object { $_.Oid.Value -eq '2.5.29.17' } | ForEach-Object { $_.Format($true) }
-```
+**La correccion:** un solo `DC=localhost` en el `SubjectName`. El stack lo
+reescribe a `DC={hostname}` en `SecurityConfiguration.Validate()`, asi que no
+hardcodea el nombre de la maquina. No se toco el SAN, ni el bind, ni las
+`BaseAddresses`.
 
-(El filtro va por OID `2.5.29.17` y no por `FriendlyName`: en un Windows en
-espanol el nombre amigable viene traducido y no matchea.)
+**Como comprobarlo.** Subir `Opc.Ua` a nivel `Information` en el logger y
+arrancar: el stack imprime la lista contra la que valida.
 
-Aun asi el mensaje persiste, o sea que esa validacion **no compara contra
-el SAN**. Hipotesis no confirmada: compara contra los hostnames derivados
-del `applicationUri`, que se arma como `urn:{Dns.GetHostName()}:...` y
-sigue llevando el nombre de la maquina.
+    Certificate Domain names:
+     LAPTOP-0JPRBIMI
+     127.0.0.1
 
-**Por que quedo asi:** confirmarlo exige leer el fuente del stack o
-instrumentar el arranque, para un mensaje que no afecta el funcionamiento.
-Se prioriza dejar la causa anotada antes que seguir probando a ciegas.
+Dos entradas, no una. La primera sale de los `DC=` del subject, la segunda
+del SAN. Si alguna vez vuelve a aparecer una sola entrada con puntos en el
+medio, es esta misma recaida.
 
-**Como probar la hipotesis, si alguna vez vale la pena:** conectar un
-cliente por hostname en vez de por IP y ver si el mensaje desaparece. No se
-puede hoy sin tocar el bind — el gateway escucha solo en loopback, asi que
-la conexion por hostname muere con un socket 10061 antes del handshake y no
-prueba nada. Requiere bindear a otra interfaz temporalmente, que es
-justamente lo que la Fase 7 cerro a proposito.
+**El error de metodo que lo mantuvo abierto.** La hipotesis anotada era que
+la validacion comparaba contra los hostnames derivados del `applicationUri`.
+Era falsa, y llevo a un intento de arreglo —agregar la IP al SAN— que no
+podia funcionar porque atacaba el campo equivocado. Se sostuvo porque el
+experimento que la habria refutado (conectar por hostname) era imposible sin
+tocar el bind de loopback. Lo que la resolvio no fue idear un experimento
+mejor: fue leer el fuente de la version exacta que corre el gateway. Misma
+familia que el bug de `FILETIME`.
 
 **Al regenerar el certificado del gateway** (borrar `pki/own/` y arrancar)
 cambia el thumbprint, y hay que volver a confiar el nuevo: correr

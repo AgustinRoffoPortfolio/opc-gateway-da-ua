@@ -401,3 +401,37 @@ habían existido, y el error sobrevivió tres fases porque la verificación de
 "listo" fue ver valores cambiando en UaExpert —cosa que hacían los tres tags que
 sí apuntaban a items nativos. Un CSV de ejemplo también es configuración, y que un
 tag esté declarado no prueba que exista del otro lado. Ver decisión 22.
+
+La Fase 7 dejo un cuarto caso, y el mas incomodo, porque el error de metodo
+fue mio y no del sistema. El servidor loggeaba en cada conexion que el
+dominio del endpoint no figuraba en su certificado. Se anoto una hipotesis
+—que comparaba contra los hostnames derivados del `applicationUri`— y se
+actuo sobre ella agregando la IP al SAN del certificado. El mensaje siguio
+apareciendo. En vez de revisar la hipotesis se la conservo con la etiqueta
+"sin confirmar", junto con el experimento que la probaria y la razon por la
+que no se podia correr: conectar por hostname exigia tocar el bind de
+loopback que la fase habia cerrado a proposito.
+
+El error fue tratar el fuente del stack como inaccesible. Esta publicado, la
+version exacta esta fijada en el `.csproj`, y leerlo llevo menos de lo que ya
+se habia gastado en teorizar. Lo que aparecio ahi eran dos comportamientos
+que ninguna hipotesis razonable habria adivinado: la validacion **descarta la
+IP** cuando el cliente entra por loopback y la sustituye por el nombre de la
+maquina, y los `DC=` del subject se **concatenan con puntos en un unico
+dominio**. El hostname correcto ya estaba en el certificado; estaba pegado al
+`127.0.0.1` formando una cadena que no existe. El arreglo fue borrar un
+`DC=`.
+
+Verificado en las dos mitades, el 24/08/2026. Del lado del servidor, con
+`Opc.Ua` subido a `Information`, el arranque lista `Certificate Domain names:
+LAPTOP-0JPRBIMI, 127.0.0.1` —dos entradas donde antes habia una sola con
+puntos en el medio— y una sesion completa de UaExpert no deja ninguna de las
+dos lineas. Del lado del cliente, el dialogo de validacion de UaExpert
+reporta solo `BadCertificateUntrusted` por ser un certificado nuevo, sin
+`BadCertificateHostNameInvalid`. Que la misma correccion apague el aviso en
+los dos procesos es lo que confirma que era un solo chequeo.
+
+La leccion no es la del bug de `FILETIME` —ahi la clave estaba en un numero
+repetido y exacto— sino su complemento: cuando el sintoma sale de una
+dependencia, la respuesta suele estar en su codigo fuente, y "no lo puedo
+probar con un experimento" no es lo mismo que "no lo puedo averiguar".

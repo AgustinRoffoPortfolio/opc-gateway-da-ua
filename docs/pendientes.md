@@ -23,11 +23,11 @@ atenderlo.
 Sin averiguar: si `publish/` esta versionado (`git ls-files publish/`).
 Un directorio de salida commiteado es una segunda fuente de verdad.
 
-### El aviso de dominio del certificado
-
-Ver `operacion.md`, seccion "El log dice domain not listed en cada
-conexion". Causa no confirmada, no bloquea, y probarlo exige tocar el bind
-que la Fase 7 cerro a proposito.
+### El aviso de dominio del certificado — RESUELTO 24/08/2026
+Era un bug del `SubjectName`, no ruido: dos `DC=` se concatenaban en un
+unico dominio invalido, y la validacion ademas descarta la IP en loopback.
+Corregido en `Program.cs`. Ver `operacion.md`, seccion "El log decia domain
+not listed en cada conexion".
 
 ### El generador miente cuando falla
 

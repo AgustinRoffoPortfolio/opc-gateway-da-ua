@@ -539,25 +539,13 @@ bug de `FILETIME`: algo que anda y miente.
 
 ## 25. El certificado del propio servidor se descarta por thumbprint
 
-El evento `CertificateValidation` no dispara solo por certificados de clientes.
-Cuando un cliente conecta, el stack valida también **el certificado del propio
-gateway** contra la URL que ese cliente mandó, y con el bind en `127.0.0.1` esa
-validación falla con `BadCertificateHostNameInvalid` sin impedir la conexión.
-
-Medido en la primera corrida de verificación: una conexión exitosa de UaExpert
-produjo `rejectedByCertificate: 1`, con el subject `CN=OpcGatewayDaUa, C=AR,
-O=Portfolio` — el nuestro. El contador estaba reportando un intento rechazado por
-cada cliente que entró sin problemas.
-
-El filtro compara el thumbprint del certificado en evaluación contra el del
-certificado propio, leído después de `CheckApplicationInstanceCertificatesAsync`
-porque antes de esa línea puede no existir. Se descarta por thumbprint y no por
-subject: el subject es texto que otro certificado podría repetir.
-
-**El hallazgo colateral vale más que el filtro.** Este es el mismo `ERR` de
-dominio que venía anotado como cabo suelto sin explicación. Ahora se sabe *quién*
-valida a *quién* —el servidor a sí mismo, contra la URL del cliente—, aunque
-sigue sin saberse por qué `127.0.0.1` no matchea el SAN. Ver `operacion.md`.
+> **Actualizacion 24/08/2026 — la causa descrita aca ya no ocurre.** El
+> `BadCertificateHostNameInvalid` sobre el certificado propio era un bug del
+> `SubjectName`, corregido: ver "El log decia domain not listed en cada
+> conexion" en `operacion.md`. El filtro se conserva —descartar el
+> certificado propio sigue siendo correcto y barato—, pero hoy no filtra
+> nada en la operacion normal. Lo que sigue describe el estado en que se
+> tomo la decision.
 
 ## 26. Solo se cuenta lo que es un rechazo
 
