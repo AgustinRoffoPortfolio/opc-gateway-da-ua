@@ -275,6 +275,47 @@ Como referencia de escala: dos rechazos de un mismo cliente produjeron doce
 líneas entre `WRN` y `ERR` en la consola, y una sola línea en la página
 (`BadCertificateUntrusted: 2 — último 18:38:46`).
 
+## Habilitar el cliente de carga (`tools/UaLoadClient`)
+
+El cliente sintético de las pruebas de carga tiene **su propia PKI**, separada de
+la del gateway. La emite solo: en el primer arranque crea un certificado
+autofirmado de 2048 bits en `%LocalApplicationData%\UaLoadClient\pki\own`. Está
+fuera de `bin/` a propósito, para que sobreviva a un `dotnet clean` — si viviera
+en el directorio de salida, cada limpieza generaría una identidad nueva y habría
+que rehacer la confianza sin que nada avisara por qué dejó de conectar.
+
+Que cada lado tenga su certificado no alcanza: además tienen que confiar el uno
+en el otro. Eso lo hace un script:
+
+```powershell
+.\tools\UaLoadClient\trust-setup.ps1
+```
+
+Copia el certificado **público** (`.der`) de cada lado al `trusted\certs\` del
+otro. Nunca toca los `.pfx`, que llevan la clave privada y no salen de
+`own\private\`. Es idempotente: correrlo de más no rompe nada.
+
+**Cuándo hay que correrlo:**
+
+- La primera vez, después de que el gateway y el cliente hayan arrancado al
+  menos una vez cada uno (antes no existen los certificados que hay que copiar).
+- Cada vez que se re-emita un certificado de cualquiera de los dos lados. Un
+  certificado nuevo tiene otro thumbprint, y el que estaba confiado deja de
+  servir.
+
+**Cómo se ve que falta correrlo:** el cliente aborta con
+`BadSecurityChecksFailed` en el `OpenSecureChannel`, y el gateway registra en el
+log el motivo real —`BadCertificateUntrusted`— y deposita el certificado en
+`pki\rejected\certs\`. El mensaje del cliente es genérico; **el log del gateway
+es el que dice qué pasó**.
+
+El cliente corre con `AutoAcceptUntrustedCertificates` en `false` y
+`useSecurity: true`, así que negocia `SignAndEncrypt` contra el mismo endpoint
+que enfrenta cualquier cliente real. Es deliberado: con auto-accept la prueba de
+carga mediría el rendimiento pero no ejercitaría la validación de confianza, que
+es justo lo que la Fase 7 activó. No hace falta encender `EnableUnsecureEndpoint`
+para correr las pruebas.
+
 ## A qué interfaz se expone el gateway
 
 Por default el servidor UA escucha **solo en loopback** (`127.0.0.1`). Es una
