@@ -383,3 +383,51 @@ falla:
 
 Ninguno de estos suma a los contadores de rechazo: solo cuentan los StatusCode de
 identidad. Un número creciendo ahí sí es alguien insistiendo mal configurado.
+
+## El log dice "domain not listed" en cada conexion
+
+En cada conexion de un cliente por IP, el servidor loguea:
+
+The domain 'opc.tcp://127.0.0.1:4840/GatewayDaUa' is not listed in the server certificate.
+Server - Client connects with an endpointUrl which does not match Server hostnames.
+
+
+**No bloquea nada.** El stack lo trata como error suprimible y el canal se
+abre igual, con SignAndEncrypt y validacion de certificado de cliente
+activa. Verificado con `tools/UaLoadClient`.
+
+El certificado del gateway **si** declara la IP: el `SubjectName` en
+`Program.cs` incluye `DC=127.0.0.1`, y el SAN emitido tiene la entrada
+`IP=127.0.0.1`. Se puede comprobar sobre el `.der` de `pki/own/certs/`:
+
+```powershell
+$p = (Get-ChildItem -LiteralPath .\pki\own\certs\ -File)[0].FullName
+$c = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($p)
+$c.Subject
+$c.Extensions | Where-Object { $_.Oid.Value -eq '2.5.29.17' } | ForEach-Object { $_.Format($true) }
+```
+
+(El filtro va por OID `2.5.29.17` y no por `FriendlyName`: en un Windows en
+espanol el nombre amigable viene traducido y no matchea.)
+
+Aun asi el mensaje persiste, o sea que esa validacion **no compara contra
+el SAN**. Hipotesis no confirmada: compara contra los hostnames derivados
+del `applicationUri`, que se arma como `urn:{Dns.GetHostName()}:...` y
+sigue llevando el nombre de la maquina.
+
+**Por que quedo asi:** confirmarlo exige leer el fuente del stack o
+instrumentar el arranque, para un mensaje que no afecta el funcionamiento.
+Se prioriza dejar la causa anotada antes que seguir probando a ciegas.
+
+**Como probar la hipotesis, si alguna vez vale la pena:** conectar un
+cliente por hostname en vez de por IP y ver si el mensaje desaparece. No se
+puede hoy sin tocar el bind — el gateway escucha solo en loopback, asi que
+la conexion por hostname muere con un socket 10061 antes del handshake y no
+prueba nada. Requiere bindear a otra interfaz temporalmente, que es
+justamente lo que la Fase 7 cerro a proposito.
+
+**Al regenerar el certificado del gateway** (borrar `pki/own/` y arrancar)
+cambia el thumbprint, y hay que volver a confiar el nuevo: correr
+`tools/UaLoadClient/trust-setup.ps1` y re-aceptarlo en UaExpert. El script
+copia pero no limpia, asi que el certificado viejo queda huerfano en el
+almacen de confiados del cliente y conviene borrarlo a mano.
