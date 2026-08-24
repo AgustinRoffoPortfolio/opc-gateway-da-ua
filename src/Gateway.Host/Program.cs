@@ -103,7 +103,17 @@ var applicationCertificate = new CertificateIdentifier
     CertificateType = ObjectTypeIds.RsaSha256ApplicationCertificateType,
     StoreType = CertificateStoreType.Directory,
     StorePath = Path.Combine(pkiRoot, "own"),
-    SubjectName = $"CN={options.ApplicationName}, C=AR, O=Portfolio"
+    // Los DC= declaran los dominios del certificado. Sin ellos el stack
+    // infiere solo el hostname de la maquina y el certificado no dice nada
+    // de 127.0.0.1, que es la unica direccion por la que se lo alcanza.
+    // Con esto el SAN emitido queda con "IP=127.0.0.1" (verificado en el
+    // certificado 60AAFA32). El stack normaliza la lista al emitir: descarta
+    // "localhost" y agrega el hostname real al subject.
+    // NO alcanza para silenciar el "domain not listed" que el servidor
+    // loguea en cada conexion por IP: esa validacion compara contra otra
+    // lista, probablemente derivada del ApplicationUri (linea ~128), que
+    // sigue llevando el hostname. Sin confirmar. Ver docs.
+    SubjectName = $"CN={options.ApplicationName}, C=AR, O=Portfolio, DC=127.0.0.1, DC=localhost"
 };
 
 // A que interfaz se expone el endpoint UA tiene que ser una decision de
