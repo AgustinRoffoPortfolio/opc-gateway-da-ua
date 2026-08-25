@@ -377,6 +377,8 @@ falla:
 |---|---|---|
 | `ERR` de dominio al conectar | cada conexión exitosa | El servidor validando su propio certificado contra la URL del cliente. Se descarta por thumbprint y no llega a los contadores. Causa exacta no confirmada. |
 | `BadServerHalted` | arranque | Un cliente pidiendo sesión antes de que el server termine de levantar. |
+| `Oops! MonitoredItems queued but no notifications available.` | esporádico con clientes suscriptos | Falsa alarma del stack. Se emite en `Subscription.InnerPublish()` (`Subscription.cs:1007`, tag `1.5.378.156`) cuando un `PublishRequest` termina sin notificaciones. Pese al texto, la condición no verifica que haya items encolados: alcanza con que la lista de publicación quede vacía porque otro request la vació primero. `SubscriptionManager` lo comenta como *false alarm or race condition*, re-encola el request y lo loguea en `Trace` (`SubscriptionManager.cs:1113`). El mismo evento sale como `Error` en un lado y `Trace` en el otro; el nivel alto es el incorrecto. No se pierden datos ni requests. |
+| `BadMessageNotAvailable` | reconexión de un cliente | El cliente pide `Republish` de secuencias de una sesión anterior que el servidor ya no tiene (`Subscription.Republish()`, `Subscription.cs:1237`). Sale como `WRN` y no como `INF` porque el `switch` de `EndpointBase.cs:496` no lo incluye en su lista de desconexiones esperadas. |
 | `BadSessionIdInvalid` / `BadMessageNotAvailable` | reinicio con UaExpert abierto | El cliente reintentando con una sesión de la corrida anterior. |
 | `Oops! MonitoredItems queued` | bajo carga | Mensaje del stack UA, no del gateway. |
 | 404 de favicon | página de diagnóstico abierta | El navegador pidiendo un ícono que no existe. |
