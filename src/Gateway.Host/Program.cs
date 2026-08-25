@@ -78,6 +78,20 @@ Log.Logger = new LoggerConfiguration()
     // cuatro lineas por request: sin esto el log del gateway queda 99% ruido HTTP
     // y los WRN del vinculo DA, que son los que importan, quedan sepultados.
     .MinimumLevel.Override("Microsoft.AspNetCore", Serilog.Events.LogEventLevel.Warning)
+    // Falsa alarma del stack UA, verificada contra el fuente en el tag
+    // 1.5.378.156: Subscription.cs:1007 lo emite como Error cuando un
+    // PublishRequest queda sin notificaciones, pero SubscriptionManager.cs:1113
+    // lo trata como "false alarm or race condition", re-encola el request y lo
+    // loguea en Trace. El mismo evento con dos niveles; el alto es el
+    // incorrecto. No se pierden datos ni requests. Solo aparece con clientes
+    // que mantienen varias suscripciones sobre una sesion: 15 min y 324.000
+    // notificaciones con UaLoadClient no lo produjeron ni una vez. Se filtra
+    // este mensaje puntual y no la categoria, para no perder errores reales
+    // del servidor UA. Detalle en docs/operacion.md.
+    .Filter.ByExcluding(logEvent =>
+        logEvent.MessageTemplate.Text.StartsWith(
+            "Oops! MonitoredItems queued",
+            StringComparison.Ordinal))
     .WriteTo.Console()
     .CreateLogger();
 
