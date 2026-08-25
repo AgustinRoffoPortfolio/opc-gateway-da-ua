@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS
-    Genera los dos CSV de la prueba de carga: aliases para MatrikonOPC
-    y tags para el gateway. Salen consistentes por construccion.
+    Genera los tres artefactos de un escenario: aliases para MatrikonOPC (CSV
+    y XML) y tags para el gateway. Salen consistentes por construccion.
 .EXAMPLE
     .\Generate-LoadTestTags.ps1 -TagCount 500
 #>
@@ -65,18 +65,31 @@ $daSourceByType = @{
     'String'  = 'Random.String'
 }
 
+# Molde de un alias en el XML del simulador, calcado de config/demo-10.opcsim.xml.
+# type="1" es fijo: no depende del tipo de dato de abajo.
+# No hay escapado de entidades XML porque los nombres de $roleTable y los
+# ItemID nativos son solo [A-Z0-9_.]. Si algun dia entra un & o un <, hay
+# que escapar antes de interpolar.
+$xmlAliasFormat = '  <PSTAlias name="{0}" itemPath="{1}" type="1"><Scaling enabled="0" type="0"/><Events enabled="0" source="Alias" severity="1" trigger="0" timestamp="0"/></PSTAlias>'
+
 $rolesPerDevice  = $roleTable.Count
 $devicesPerPlant = 20
 $deviceCount     = [math]::Ceiling($TagCount / $rolesPerDevice)
 
-$uaLines = [System.Collections.Generic.List[string]]::new()
-$daLines = [System.Collections.Generic.List[string]]::new()
-$stamp   = (Get-Date).ToString('yyyy-MM-dd HH:mm')
+$uaLines  = [System.Collections.Generic.List[string]]::new()
+$daLines  = [System.Collections.Generic.List[string]]::new()
+$xmlLines = [System.Collections.Generic.List[string]]::new()
+$stamp    = (Get-Date).ToString('yyyy-MM-dd HH:mm')
 
 $uaLines.Add("# Generado por Generate-LoadTestTags.ps1 el $stamp - $TagCount tags")
 $uaLines.Add("# Nombres inventados. Decimales con PUNTO (InvariantCulture).")
 $uaLines.Add('TAG_NAME_OPC_UA;TAG_NAME_OPC_DA;DATA_TYPE;MULTIPLICADOR;OFFSET;EU;SCAN_RATE_MS;DEADBAND;ACCESS_LEVEL;DESCRIPTION;ENABLED')
 $daLines.Add("# Generado por Generate-LoadTestTags.ps1 el $stamp - $TagCount aliases")
+
+# El XML no lleva cabecera de comentario: no sabemos si el parser de Matrikon
+# digiere <!-- -->, y no vale el riesgo. La trazabilidad va en el nombre del
+# archivo y en docs/operacion.md.
+$xmlLines.Add('<Matrikon.OPC.Simulation><CSimRootDevLink name="" description="Sim Server Root"/><PSTAliasGroup>')
 
 $emitted = 0
 for ($device = 1; $device -le $deviceCount -and $emitted -lt $TagCount; $device++) {
@@ -92,12 +105,19 @@ for ($device = 1; $device -le $deviceCount -and $emitted -lt $TagCount; $device+
         $aliasName = "${plantId}_${deviceId}_${name}"
 
         # El alias vive en el grupo raiz: el ItemID resultante lleva punto inicial.
+        # Por eso el XML guarda el nombre SIN punto y el CSV de tags lo agrega.
         $uaLines.Add("$plantId.$deviceId.$name;.$aliasName;$type;$mult;$offset;$eu;$ScanRateMs;0;Read;$name de $deviceId;True")
         $daLines.Add(",$aliasName,$daItem,0,0,0,0,0,,,,,,,0,Alias,0,1,,0,0")
+        # Los parentesis extra son obligatorios: dentro de un llamado a metodo
+        # PowerShell toma la coma como separador de argumentos del metodo, y el
+        # -f se quedaria con un solo valor.
+        $xmlLines.Add(($xmlAliasFormat -f $aliasName, $daItem))
 
         $emitted++
     }
 }
+
+$xmlLines.Add('</PSTAliasGroup></Matrikon.OPC.Simulation>')
 
 # El directorio puede no existir en un clon recien hecho, y Resolve-Path
 # falla si no esta. La API de .NET lo crea si falta, no hace nada si ya
@@ -106,16 +126,20 @@ for ($device = 1; $device -le $deviceCount -and $emitted -lt $TagCount; $device+
 # a la ubicacion actual si el usuario paso una relativa.
 $resolvedDir = [System.IO.Directory]::CreateDirectory(
     [System.IO.Path]::Combine($PWD.ProviderPath, $OutputDir)).FullName
-$uaPath = Join-Path $resolvedDir "tags-$TagCount.csv"
-$daPath = Join-Path $resolvedDir "aliases-$TagCount.csv"
+$uaPath  = Join-Path $resolvedDir "tags-$TagCount.csv"
+$daPath  = Join-Path $resolvedDir "aliases-$TagCount.csv"
+$xmlPath = Join-Path $resolvedDir "scenario-$TagCount.opcsim.xml"
 
 # ASCII a proposito: el contenido no tiene acentos y evita el BOM,
-# que Matrikon podria no digerir al importar.
+# que Matrikon podria no digerir al importar. El molde tampoco declara
+# <?xml encoding=...?>, asi que no lo agregamos.
 [System.IO.File]::WriteAllLines($uaPath, $uaLines, [System.Text.Encoding]::ASCII)
 [System.IO.File]::WriteAllLines($daPath, $daLines, [System.Text.Encoding]::ASCII)
+[System.IO.File]::WriteAllLines($xmlPath, $xmlLines, [System.Text.Encoding]::ASCII)
 
 Write-Host "Tags generados : $emitted"
 Write-Host "Equipos        : $($device - 1) de $deviceCount previstos"
 Write-Host "Plantas        : $plantId (ultima)"
 Write-Host "CSV tags UA    : $uaPath"
 Write-Host "CSV aliases DA : $daPath"
+Write-Host "XML escenario  : $xmlPath"
