@@ -84,6 +84,40 @@ La configuración vive en `src/Gateway.Host/appsettings.json`. Los tags de ejemp
 están en `config/tags.example.csv`, y `config/aliases.example.csv` crea del lado
 del simulador los ItemID que ese mapeo espera encontrar.
 
+### Escenarios del simulador
+
+Un escenario son dos piezas que tienen que coincidir: los aliases que existen del
+lado DA y el CSV que los mapea a nombres UA. `config/demo-500.*` trae un escenario
+de 500 tags ya armado, y `tools/Generate-LoadTestTags.ps1` genera uno de cualquier
+tamaño:
+
+```powershell
+.\tools\Generate-LoadTestTags.ps1 -TagCount 4000
+```
+
+Eso escribe tres archivos en `scratch/`: el `.opcsim.xml` del escenario, el CSV de
+tags para el gateway y el CSV de aliases (solo como respaldo, el XML ya los trae).
+
+Para levantarlo:
+
+1. En el configurador del simulador, `File → Open` sobre el `.opcsim.xml`. El
+   panel de la izquierda tiene que mostrar la cantidad de aliases esperada.
+2. Arrancar el gateway con el CSV de tags **de la misma corrida**:
+
+```powershell
+$env:Ua__TagsCsvPath = (Resolve-Path .\config\demo-500.tags.csv).Path
+dotnet run --project src/Gateway.Host
+```
+
+El XML y el CSV se generan juntos y solo sirven de a pares: mezclar el XML de un
+escenario con el CSV de otro da todos los tags en `Bad`, porque ninguno de los
+ItemID que el CSV pide existe del lado DA.
+
+Todos los aliases de un mismo tipo de dato apuntan al mismo ItemID nativo del
+simulador (`Random.Real8`, `Random.Boolean`, `Random.Int4`, `Random.String`), así
+que comparten el valor de origen. Es carga real para el lado UA —cada alias es un
+item DA suscripto y un nodo UA publicado— pero no son señales independientes.
+
 ## Decisiones de diseño
 
 - **El `SourceTimestamp` no se pisa nunca.** El timestamp que viene del DA llega
