@@ -68,9 +68,22 @@ dotnet run --project src/Gateway.Host
 
 Quedan levantadas dos cosas:
 
-- **El servidor OPC UA** en `opc.tcp://localhost:4840/GatewayDaUa`, que genera su
+- **El servidor OPC UA** en `opc.tcp://127.0.0.1:4840/GatewayDaUa`, que genera su
   propio certificado en `pki/` la primera vez que corre. Se conecta con cualquier
   cliente OPC UA; durante el desarrollo se usó UaExpert.
+
+  **La primera conexión se rechaza, y es lo esperado.** La validación de
+  certificados está activa y la confianza es mutua, así que hay que habilitar los
+  dos lados: en el cliente, aceptar el certificado del servidor —en UaExpert, el
+  botón *Trust Server Certificate*—; y en el gateway, mover el certificado que
+  quedó en `pki/rejected/certs/` a `pki/trusted/certs/`, creando esa carpeta si es
+  la primera vez. Después se reconecta sin reiniciar el gateway: el store de
+  confianza se relee en cada handshake.
+
+  Conectarse por `127.0.0.1` y no por `localhost`: el certificado se emite para esa
+  dirección y el cliente compara el nombre contra la URL usada. Otro nombre produce
+  un rechazo que parece un problema de red y no lo es.
+
 - **La página de diagnóstico** en `http://localhost:8080`, con dos vistas: una de
   operador (semáforo, estado del vínculo DA, contadores) y una de detalle (tabla
   de tags con buscador, y el `SourceTimestamp` contra el `LastUpdateUtc` en
