@@ -52,3 +52,6 @@ desktop.ini
 # Evidencia generada por las pruebas de carga (CSV de tags y aliases).
 # Se regenera con tools/Generate-LoadTestTags.ps1, no se versiona.
 scratch/
+
+# Deuda de trabajo, no es entregable
+docs/pendientes.md
