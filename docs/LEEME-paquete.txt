@@ -12,9 +12,9 @@ REQUISITOS
 
 - NO hace falta instalar .NET. El runtime viaja adentro del paquete.
 
-- Un servidor OPC DA. Va incluido el simulador de Matrikon
-  (MatrikonOPCSimulation.exe). Es gratuito para uso no productivo y
-  redistribuible segun su propia licencia, por eso viene en el paquete.
+- Un servidor OPC DA. El paquete NO lo trae: se instala aparte el
+  simulador de Matrikon (MatrikonOPCSimulation.exe, ~107 MB), gratuito
+  para uso no productivo.
   Descarga oficial: https://www.matrikonopc.com/downloads/178/index.aspx
 
   El instalador registra componentes COM en Windows, asi que pide
