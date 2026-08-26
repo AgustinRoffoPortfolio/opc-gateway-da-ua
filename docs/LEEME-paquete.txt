@@ -83,15 +83,16 @@ habilitar los dos lados.
 
 3. Todavia no conecta: falta que el GATEWAY confie en el cliente. El
    gateway deposito el certificado rechazado en pki\rejected\certs\.
-   Hay que moverlo a pki\trusted\certs\. En PowerShell, parado en la
-   carpeta del paquete:
+   Hay que moverlo a pki\trusted\certs\, que ya viene en el paquete.
+   En PowerShell, parado en la carpeta del paquete:
 
-       New-Item -ItemType Directory -Force -Path .\pki\trusted\certs
        Move-Item .\pki\rejected\certs\*.der .\pki\trusted\certs\
 
-   La primera linea crea la carpeta, que en un paquete recien estrenado
-   todavia no existe. Se mueve y no se copia: asi rejected\ queda vacia
-   y un rechazo que aparezca ahi mas adelante es uno de verdad.
+   Se mueve y no se copia: asi rejected\ queda vacia y un rechazo que
+   aparezca ahi mas adelante es uno de verdad.
+
+   (Si la carpeta no estuviera, se crea con
+   New-Item -ItemType Directory -Force -Path .\pki\trusted\certs)
 
 4. Reconectar en UaExpert (Disconnect y Connect). No hace falta
    reiniciar el gateway.
@@ -103,6 +104,32 @@ Mientras el certificado no este confiado, la consola del gateway escupe
 varias lineas de ERR por cada intento. Es ruido del stack UA. La linea
 que importa es la WRN propia del gateway:
     Intento de conexion rechazado por certificado: BadCertificateUntrusted
+
+
+SI SE QUIERE PROBAR RAPIDO, SIN PELEAR CON CERTIFICADOS
+
+El paso de mover el .der existe porque el gateway valida certificados en
+serio. Se puede aflojar desde appsettings.json, en dos niveles:
+
+  "Ua": { "AutoAcceptUntrustedCertificates": true }
+
+      El gateway acepta cualquier certificado de cliente sin pedir que
+      se lo depositen en trusted\certs\. Desaparece el paso 3. El paso 2
+      sigue estando: que UaExpert confie en el gateway es decision del
+      cliente y el servidor no la puede tomar por el. La conexion sigue
+      firmada y cifrada.
+
+  "Ua": { "EnableUnsecureEndpoint": true }
+
+      Agrega ademas un endpoint sin seguridad (SecurityPolicy None).
+      Ahi no hay certificado en juego y se conecta de una, pero tampoco
+      hay firma ni cifrado.
+
+Hay que reiniciar el gateway despues de tocar el archivo. Los dos vienen
+en false a proposito: rechazar un certificado desconocido es el
+comportamiento correcto de un servidor UA, y verlo rechazar es parte de
+lo que esta prueba de concepto muestra. Se prenden para probar rapido,
+no para dejarlos asi.
 
 
 LO QUE CONVIENE MIRAR
