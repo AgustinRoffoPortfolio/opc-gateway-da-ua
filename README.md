@@ -5,6 +5,14 @@ migrar el sistema existente. Actúa como servidor OPC UA hacia los clientes y co
 cliente OPC DA hacia el servidor legado, traduciendo valor, **calidad** y
 **timestamp de origen** entre dos modelos de datos que no coinciden.
 
+## Demo
+
+https://github.com/user-attachments/assets/51d1219a-d208-4936-a5ff-b2411cad9c60
+
+*35 segundos, sin audio: arranque del gateway con 500 tags, el simulador OPC DA
+con sus aliases, UaExpert leyendo los mismos tags del lado OPC UA con el
+`SourceTimestamp` del origen intacto, y la página de diagnóstico.*
+
 > **Alcance:** prueba de concepto. No es un producto y no va a producción.
 >
 > Gateways OPC DA→UA existen a montones, comerciales y libres. El valor de este no
