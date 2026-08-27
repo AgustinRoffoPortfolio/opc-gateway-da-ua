@@ -358,13 +358,16 @@ dejó de publicarse.
   debería pedirse, y la columna `DATA_TYPE`. La fila debería mostrar el
   `TagQuality` nominal y no su traducción a UA. Documentado como límite conocido
   en [calidad-da-ua.md](calidad-da-ua.md).
-- **El `UaLoadClient` no tiene certificado propio.** Se construyó en la Fase 6
-  para conectar por el endpoint `None`, que la Fase 7 apaga por default. Con la
-  seguridad activa ni siquiera llega a la red: falla con `BadConfigurationError`
-  por no encontrar certificado para `Basic256Sha256`. Volver a correr las pruebas
-  de carga hoy exige encender `EnableUnsecureEndpoint`.
-- **Las mediciones de la Fase 6 están a medio hacer.** Ver las limitaciones
-  declaradas en [pruebas-carga.md](pruebas-carga.md).
+- **Las mediciones de la Fase 6 cubren menos de lo que pedía el plan original,
+  por recorte deliberado.**
+  Lo que se midió está cerrado y es lo que sostiene la
+  tesis del diseño: 8.000 tags de punta a punta, el aislamiento que da la cache
+  con cuatro clientes, las latencias por tramo y dos horas de soak sin fuga.
+  Quedaron afuera los soaks de 8 y 24 h, el escenario de variación parcial y la
+  validación cruzada contra una referencia independiente. El criterio fue que,
+  con la tesis ya medida y sin fuga en dos horas, el esfuerzo restante rendía
+  menos que cerrar y presentar. Las limitaciones de cada corrida están declaradas
+  una por una en [pruebas-carga.md](pruebas-carga.md).
 
 ## Pendientes que se cerraron
 
@@ -380,8 +383,17 @@ del resultado.
 - **Requisitos de arranque del cliente DA (MTA y `Bootstrap.Initialize()`).**
   Verificado en la práctica desde la Fase 2 y sostenido en todas las corridas
   posteriores, incluidas las de 8.000 tags y las de caída y reconexión del
-  servidor DA. La aplicación de consola es MTA por defecto y la inicialización
+  servidor DA.   La aplicación de consola es MTA por defecto y la inicialización
   ocurre antes de construir el host.
+- **El `UaLoadClient` contra el endpoint seguro.** Quedó anotado que el cliente
+  no tenía certificado propio y que volver a correr las pruebas de carga exigía
+  encender `EnableUnsecureEndpoint`. Verificado el 27/08/2026: es falso. El
+  cliente conecta contra el endpoint seguro tal como está, negociando
+  `SignAndEncrypt` con `Aes256_Sha256_RsaPss`, un minuto de corrida y 458
+  notificaciones sobre 10 tags, sin tocar la configuración y sin copiar ningún
+  certificado. La nota había quedado congelada en el estado anterior a darle
+  certificado propio al cliente, y la política que menciona —`Basic256Sha256`—
+  ni siquiera es la que el endpoint negocia hoy.
 
 ## Sobre el método
 
