@@ -132,7 +132,7 @@ puede tapar exactamente el problema que la prueba busca encontrar. Si aguanta a
 
 ### Resultados
 
-| Escalón | Tags válidos | Errores | Arranque address space | Memoria proceso | CPU proceso | Tags suscriptos UA |
+| Escalón | Tags válidos | Errores | Arranque address space | Memoria proceso (WS) | CPU proceso | Tags suscriptos UA |
 |---|---|---|---|---|---|---|
 | 500 | 500 | 0 | < 1 s | no medido | — | 1 |
 | 4.000 | 4.000 | 0 | < 1 s | 73,7 MB | 0 % | 40 |
@@ -141,7 +141,7 @@ puede tapar exactamente el problema que la prueba busca encontrar. Si aguanta a
 Soak de 33 minutos en el escalón de 8.000, con los 800 tags suscriptos activos
 durante toda la corrida:
 
-| Momento | Memoria `Gateway.Host` | Memoria COM Surrogate |
+| Momento | Memoria `Gateway.Host` (WS) | Memoria COM Surrogate (WS) |
 |---|---|---|
 | Inicio | 72,7 MB | 0,6 MB |
 | +33 min | 73,2 MB | 1,0 MB |
