@@ -448,36 +448,36 @@ habían existido, y el error sobrevivió tres fases porque la verificación de
 sí apuntaban a items nativos. Un CSV de ejemplo también es configuración, y que un
 tag esté declarado no prueba que exista del otro lado. Ver decisión 22.
 
-La Fase 7 dejo un cuarto caso, y el mas incomodo, porque el error de metodo
-fue mio y no del sistema. El servidor loggeaba en cada conexion que el
-dominio del endpoint no figuraba en su certificado. Se anoto una hipotesis
+La Fase 7 dejó un cuarto caso, y el más incómodo, porque el error de método
+fue mío y no del sistema. El servidor loggeaba en cada conexión que el
+dominio del endpoint no figuraba en su certificado. Se anotó una hipótesis
 —que comparaba contra los hostnames derivados del `applicationUri`— y se
-actuo sobre ella agregando la IP al SAN del certificado. El mensaje siguio
-apareciendo. En vez de revisar la hipotesis se la conservo con la etiqueta
-"sin confirmar", junto con el experimento que la probaria y la razon por la
-que no se podia correr: conectar por hostname exigia tocar el bind de
-loopback que la fase habia cerrado a proposito.
+actuó sobre ella agregando la IP al SAN del certificado. El mensaje siguió
+apareciendo. En vez de revisar la hipótesis se la conservó con la etiqueta
+"sin confirmar", junto con el experimento que la probaría y la razón por la
+que no se podía correr: conectar por hostname exigía tocar el bind de
+loopback que la fase había cerrado a propósito.
 
-El error fue tratar el fuente del stack como inaccesible. Esta publicado, la
-version exacta esta fijada en el `.csproj`, y leerlo llevo menos de lo que ya
-se habia gastado en teorizar. Lo que aparecio ahi eran dos comportamientos
-que ninguna hipotesis razonable habria adivinado: la validacion **descarta la
+El error fue tratar el fuente del stack como inaccesible. Está publicado, la
+versión exacta está fijada en el `.csproj`, y leerlo llevó menos de lo que ya
+se había gastado en teorizar. Lo que apareció ahí eran dos comportamientos
+que ninguna hipótesis razonable habría adivinado: la validación **descarta la
 IP** cuando el cliente entra por loopback y la sustituye por el nombre de la
-maquina, y los `DC=` del subject se **concatenan con puntos en un unico
+máquina, y los `DC=` del subject se **concatenan con puntos en un único
 dominio**. El hostname correcto ya estaba en el certificado; estaba pegado al
 `127.0.0.1` formando una cadena que no existe. El arreglo fue borrar un
 `DC=`.
 
 Verificado en las dos mitades, el 24/08/2026. Del lado del servidor, con
 `Opc.Ua` subido a `Information`, el arranque lista `Certificate Domain names:
-LAPTOP-0JPRBIMI, 127.0.0.1` —dos entradas donde antes habia una sola con
-puntos en el medio— y una sesion completa de UaExpert no deja ninguna de las
-dos lineas. Del lado del cliente, el dialogo de validacion de UaExpert
+LAPTOP-0JPRBIMI, 127.0.0.1` —dos entradas donde antes había una sola con
+puntos en el medio— y una sesión completa de UaExpert no deja ninguna de las
+dos líneas. Del lado del cliente, el diálogo de validación de UaExpert
 reporta solo `BadCertificateUntrusted` por ser un certificado nuevo, sin
-`BadCertificateHostNameInvalid`. Que la misma correccion apague el aviso en
+`BadCertificateHostNameInvalid`. Que la misma corrección apague el aviso en
 los dos procesos es lo que confirma que era un solo chequeo.
 
-La leccion no es la del bug de `FILETIME` —ahi la clave estaba en un numero
-repetido y exacto— sino su complemento: cuando el sintoma sale de una
-dependencia, la respuesta suele estar en su codigo fuente, y "no lo puedo
+La lección no es la del bug de `FILETIME` —ahí la clave estaba en un número
+repetido y exacto— sino su complemento: cuando el síntoma sale de una
+dependencia, la respuesta suele estar en su código fuente, y "no lo puedo
 probar con un experimento" no es lo mismo que "no lo puedo averiguar".
