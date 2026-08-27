@@ -236,8 +236,10 @@ documentación.
   rechazos en cinco escenarios, que encontró y corrigió dos falsos positivos.
 
   **Fuera de alcance por decisión:** servicio de Windows, y usuarios y roles.
-  Una PoC atada a loopback no gana nada con autenticación de usuario, y
-  empaquetarla como servicio es trabajo de producto, no de portfolio.
+  Sobre un gateway de solo lectura no hay privilegio que separar: autenticar
+  diría quién está leyendo, que es auditoría, no control de acceso. Y
+  empaquetarlo como servicio es despliegue, no algo que demuestre nada sobre
+  el gateway.
   **Declarado no corrido:** el rechazo por token de usuario. El contador existe
   y filtra por los `StatusCode` de identidad, pero no se provocó un rechazo real.
 
