@@ -3,6 +3,42 @@
 Qué se comprobó de forma directa —consola, cliente externo, herramienta de
 terceros— y qué queda abierto. Se agrega una sección por fase cerrada.
 
+## Fase 0 — spike de viabilidad del cliente DA
+
+> **Reconstruida el 26/08/2026, a diferencia del resto del documento.** El spike
+> corrió en una carpeta descartable fuera del repositorio y sin control de
+> versiones, así que de esta fase no quedó ni código ni commits: lo que sigue
+> sale de las notas de trabajo de entonces. Se agrega porque una fase que decidió
+> el SDK, la licencia y el simulador no puede ser la única sin registro.
+
+Verificado:
+
+- **Se puede hablar OPC DA desde .NET moderno.** Consola conectando al servidor
+  de simulación por COM local e imprimiendo los tres campos de un item
+  (`Random.Real8`): valor, calidad y timestamp. Era el riesgo que podía matar el
+  proyecto, y cerrarlo era el único objetivo de la fase.
+- **Los requisitos de arranque de COM son dos y hay que cumplirlos en orden.**
+  El proceso tiene que estar en apartment MTA y `Bootstrap.Initialize()` tiene
+  que correr antes que cualquier otra llamada COM; llegar tarde da
+  `RPC_E_TOO_LATE`. Verificado en el spike y sostenido en todas las fases
+  posteriores.
+- **El SDK devuelve los timestamps en hora local con offset, no en UTC.** Se vio
+  en el `CurrentTime` del estado del servidor, terminado en `-03:00`. De ahí sale
+  la normalización a UTC en el borde de `Gateway.Da`: dejarlo pasar produciría
+  saltos de una hora dos veces al año, imposibles de rastrear meses después.
+- **`AddItems` devuelve un resultado por item y no lanza excepción si uno falla.**
+  Es lo que después hizo posible la carga parcial de la Fase 3: un ItemID mal
+  escrito se reporta y el gateway sigue.
+
+Elección del SDK cliente DA — ver decisión 28. En resumen: se eligió
+`TitaniumAS.Opc.Client.NetCore` 1.0.2.1 y **no hubo un SDK que se intentara y
+fallara**. El paquete oficial se descartó por análisis, sin escribir código
+contra él: targetea `net40` y desde `net10.0-windows` solo se consumiría con
+`NU1701`. El plan B —Technosoftware, GPL 3.0— quedó anotado y nunca se ejerció;
+de haberse usado, el repositorio sería GPL en vez de MIT.
+
+Tests: no aplica. El spike fue código descartable, previo al repositorio.
+
 ## Fase 1 — esqueleto UA
 
 Verificado:
@@ -28,12 +64,12 @@ Verificado:
   ser un bug del SDK cliente DA, identificado y corregido en la Fase 6:
   [`bug-filetime-sdk.md`](bug-filetime-sdk.md).
 
-  Nota para regrabar la demo: los números de arriba son exactamente lo que la demo
-  tiene que mostrar —`SourceTimestamp` pegado al reloj del servidor DA y
-  `ServerTimestamp` unos cientos de milisegundos después—, y con la corrección
-  aplicada salen así siempre, sin depender de qué otro cliente DA esté conectado.
-
-Deuda: el video de demo está grabado pero sin editar.
+- **La demo grabada muestra el comportamiento corregido.** El video embebido en
+  el README es posterior a la corrección del bug del SDK: se ve el
+  `SourceTimestamp` pegado al reloj del servidor DA y el `ServerTimestamp` unos
+  cientos de milisegundos después, sin el desfase de siete minutos. Importa que
+  sea el video nuevo y no el original de la Fase 2: una demo grabada antes de la
+  Fase 6 estaría mostrando el bug como si fuera el diseño.
 
 ## Fase 3 — configuración robusta
 
@@ -322,8 +358,6 @@ dejó de publicarse.
   debería pedirse, y la columna `DATA_TYPE`. La fila debería mostrar el
   `TagQuality` nominal y no su traducción a UA. Documentado como límite conocido
   en [calidad-da-ua.md](calidad-da-ua.md).
-- **El video de la demo de Fase 2 está sin editar.** Es la pieza de mayor peso
-  demostrativo del proyecto.
 - **El `UaLoadClient` no tiene certificado propio.** Se construyó en la Fase 6
   para conectar por el endpoint `None`, que la Fase 7 apaga por default. Con la
   seguridad activa ni siquiera llega a la red: falla con `BadConfigurationError`

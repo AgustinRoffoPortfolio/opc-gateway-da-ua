@@ -5,6 +5,8 @@ migrar el sistema existente. Actúa como servidor OPC UA hacia los clientes y co
 cliente OPC DA hacia el servidor legado, traduciendo valor, **calidad** y
 **timestamp de origen** entre dos modelos de datos que no coinciden.
 
+**Repositorio:** https://github.com/AgustinRoffoPortfolio/opc-gateway-da-ua
+
 ## Demo
 
 https://github.com/user-attachments/assets/51d1219a-d208-4936-a5ff-b2411cad9c60
@@ -12,6 +14,10 @@ https://github.com/user-attachments/assets/51d1219a-d208-4936-a5ff-b2411cad9c60
 *35 segundos, sin audio: arranque del gateway con 500 tags, el simulador OPC DA
 con sus aliases, UaExpert leyendo los mismos tags del lado OPC UA con el
 `SourceTimestamp` del origen intacto, y la página de diagnóstico.*
+
+> El video está alojado en el CDN de GitHub y se reproduce embebido solo desde
+> github.com. En un clon local, en VS Code o en un mirror, esa línea aparece como
+> texto plano.
 
 > **Alcance:** prueba de concepto. No es un producto y no va a producción.
 >
@@ -70,9 +76,18 @@ Detalle completo en [`docs/arquitectura.md`](docs/arquitectura.md).
 
 **Arranque**
 
+El gateway necesita saber qué CSV de tags cargar. Es el único parámetro sin
+valor por defecto, así que hay que dárselo:
+
 ```powershell
+$env:Ua__TagsCsvPath = (Resolve-Path .\config\demo-500.tags.csv).Path
 dotnet run --project src/Gateway.Host
 ```
+
+Del lado del simulador tiene que estar cargado el escenario que le corresponde a
+ese CSV — ver [Escenarios del simulador](#escenarios-del-simulador) más abajo. Sin
+eso el gateway arranca igual, pero todos los tags salen en `Bad`: los ItemID que
+el CSV pide no existen del otro lado.
 
 Quedan levantadas dos cosas:
 
@@ -123,12 +138,8 @@ Para levantarlo:
 
 1. En el configurador del simulador, `File → Open` sobre el `.opcsim.xml`. El
    panel de la izquierda tiene que mostrar la cantidad de aliases esperada.
-2. Arrancar el gateway con el CSV de tags **de la misma corrida**:
-
-```powershell
-$env:Ua__TagsCsvPath = (Resolve-Path .\config\demo-500.tags.csv).Path
-dotnet run --project src/Gateway.Host
-```
+2. Arrancar el gateway apuntando `Ua__TagsCsvPath` al CSV de tags **de la misma
+   corrida**, como en el bloque de arranque de más arriba.
 
 El XML y el CSV se generan juntos y solo sirven de a pares: mezclar el XML de un
 escenario con el CSV de otro da todos los tags en `Bad`, porque ninguno de los
@@ -161,14 +172,15 @@ item DA suscripto y un nodo UA publicado— pero no son señales independientes.
 - **`PlatformTarget x86` solo en el host.** El driver DA obliga a 32 bits, y el
   bitness lo define el ejecutable, no las bibliotecas.
 
-Las 27 decisiones numeradas, con su porqué, están en
+Las 30 decisiones numeradas, con su porqué, están en
 [`docs/decisiones.md`](docs/decisiones.md).
 
 ## Estado
 
-**Implementación cerrada al 24/08/2026.** Siete fases ejecutadas —dos de ellas con
-alcance recortado y el criterio de recorte declarado— y la octava descartada por
-decisión. De acá en más el proyecto solo recibe refinamiento de documentación.
+**Implementación cerrada al 24/08/2026.** Ocho fases ejecutadas, de la 0 a la 7
+—dos de ellas con alcance recortado y el criterio de recorte declarado— y la Fase
+8 descartada por decisión. De acá en más el proyecto solo recibe refinamiento de
+documentación.
 
 54 tests en verde. Lo que se verificó con los propios ojos, fase por fase, está en
 [`docs/verificacion.md`](docs/verificacion.md); las mediciones de volumen, en
@@ -229,8 +241,6 @@ decisión. De acá en más el proyecto solo recibe refinamiento de documentació
   **Declarado no corrido:** el rechazo por token de usuario. El contador existe
   y filtra por los `StatusCode` de identidad, pero no se provocó un rechazo real.
 
-
-
 ## Documentación
 
 | Documento | Qué contiene |
@@ -240,6 +250,9 @@ decisión. De acá en más el proyecto solo recibe refinamiento de documentació
 | [`docs/configuracion-tags.md`](docs/configuracion-tags.md) | El CSV campo por campo y la carga parcial |
 | [`docs/calidad-da-ua.md`](docs/calidad-da-ua.md) | La tabla de mapeo de calidad DA ↔ StatusCode UA |
 | [`docs/verificacion.md`](docs/verificacion.md) | Qué se comprobó con los propios ojos, fase por fase |
+| [`docs/pruebas-carga.md`](docs/pruebas-carga.md) | Escala, memoria y soak |
+| [`docs/pruebas-carga-rendimiento.md`](docs/pruebas-carga-rendimiento.md) | Múltiples clientes y latencias de punta a punta |
+| [`docs/pruebas-carga-como-correr.md`](docs/pruebas-carga-como-correr.md) | Cómo se arma y se corre un escenario de carga |
 | [`docs/operacion.md`](docs/operacion.md) | Cómo se levanta y qué mirar si falla |
 | [`docs/bug-filetime-sdk.md`](docs/bug-filetime-sdk.md) | El bug del SDK: aritmética, evidencia y corrección |
 | [`docs/glosario.md`](docs/glosario.md) | La jerga del dominio |
@@ -259,6 +272,8 @@ repositorio de origen declarado en NuGet). Se eligió porque era la única vía 
 consumir el SDK desde .NET 10 sin vendorizar el fuente.
 
 Esa distinción no es un detalle de procedencia: es la explicación de por qué el
-proyecto arrastró durante cinco fases un bug de conversión de `FILETIME` que
-upstream ya había corregido en 2021 y que nunca se publicó en NuGet. El diagnóstico
-completo está en [docs/bug-filetime-sdk.md](docs/bug-filetime-sdk.md).
+proyecto arrastró un bug de conversión de `FILETIME` que upstream ya había
+corregido en 2021 y que nunca se publicó en NuGet. El diagnóstico completo, y el
+error de método que lo mantuvo vivo, están en
+[docs/bug-filetime-sdk.md](docs/bug-filetime-sdk.md) y en la sección "Sobre el
+método" de [docs/verificacion.md](docs/verificacion.md).

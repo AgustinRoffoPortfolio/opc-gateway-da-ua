@@ -31,11 +31,28 @@ TAG_NAME_OPC_UA;TAG_NAME_OPC_DA;DATA_TYPE;MULTIPLICADOR;OFFSET;EU;SCAN_RATE_MS;D
 | 11 | `ENABLED` | `True` / `False`. | En uso |
 
 **"Solo viaja"** significa que el campo se parsea, se valida y llega al objeto
-`TagDefinition`, pero ningún componente lo consume todavía. Se declaran ahora
-para no tener que migrar el formato del CSV en cada fase: `EU` y `DEADBAND` los
-usará la Fase 5, `SCAN_RATE_MS` la Fase 6 cuando haya varios grupos DA con
-frecuencias distintas. Está anotado a propósito para que nadie asuma que un
-tag con `DEADBAND=0.5` está filtrando algo.
+`TagDefinition`, pero ningún componente lo consume. Los cuatro campos se
+declararon desde el principio para no tener que migrar el formato del CSV —y
+todos los archivos escritos contra él— cada vez que una fase necesitara un dato
+nuevo.
+
+**Ninguno llegó a usarse, y el proyecto cerró así.** `EU` estaba previsto para
+la Fase 5, cuando los tags con unidad de ingeniería subieran de
+`BaseDataVariableState` a `AnalogItemState` (decisión 4); `DEADBAND`, para
+filtrar cambios menores al umbral; `SCAN_RATE_MS`, para la Fase 6, si aparecían
+varios grupos DA con frecuencias distintas. Nada de eso hizo falta: el gateway
+lee todo en un solo grupo al mismo ritmo, y publica cada muestra que entra.
+
+La apuesta salió bien igual, aunque no por donde se esperaba. El formato del CSV
+no cambió en siete fases, que era el objetivo; que además tres campos quedaran
+sin consumir es el precio de haberlos declarado por adelantado, y es barato. Un
+tag con `EU=bar` y `DEADBAND=0.5` sigue declarando una intención legible para
+quien lea la configuración, y el día que alguien implemente el filtrado el dato
+ya está donde tiene que estar.
+
+**Lo que no hay que asumir:** que un tag con `DEADBAND=0.5` esté filtrando algo.
+No filtra nada. Por eso la columna "Estado" de la tabla de arriba es parte del
+formato y no una nota al margen.
 
 ## Carga parcial: un tag malo no tira el gateway
 
@@ -88,8 +105,11 @@ ir a leer el código para corregir una fila de configuración.
 ### `ACCESS_LEVEL` no habilita escritura
 
 El campo tiene exactamente dos valores, `Read` y `Hidden`, y **ninguno de los
-dos toca la escritura**. El gateway es de solo lectura hasta la Fase 8, y este
-campo no es la puerta por la que eso cambia.
+dos toca la escritura**. El gateway es de solo lectura, y este campo no es la
+puerta por la que eso cambiaría. La escritura estaba prevista para una Fase 8
+que se descartó por decisión, así que hoy la restricción no tiene fecha de
+vencimiento: la hace cumplir el propio stack UA, que responde `BadNotWritable`
+a cualquier intento (verificado en la Fase 7).
 
 El nombre `ACCESS_LEVEL` invita a que alguien agregue un `Write` "que falta",
 y en un gateway contra un servidor legado en producción una escritura accidental

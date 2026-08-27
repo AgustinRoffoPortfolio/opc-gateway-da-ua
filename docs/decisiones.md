@@ -539,13 +539,46 @@ bug de `FILETIME`: algo que anda y miente.
 
 ## 25. El certificado del propio servidor se descarta por thumbprint
 
-> **Actualizacion 24/08/2026 — la causa descrita aca ya no ocurre.** El
+> **Actualización 24/08/2026 — la causa descrita acá ya no ocurre.** El
 > `BadCertificateHostNameInvalid` sobre el certificado propio era un bug del
-> `SubjectName`, corregido: ver "El log decia domain not listed en cada
-> conexion" en `operacion.md`. El filtro se conserva —descartar el
-> certificado propio sigue siendo correcto y barato—, pero hoy no filtra
-> nada en la operacion normal. Lo que sigue describe el estado en que se
-> tomo la decision.
+> `SubjectName`, corregido: ver "El log decía domain not listed en cada
+> conexión" en `operacion.md`. El filtro se conserva, pero hoy no filtra nada en
+> la operación normal. Lo que sigue describe el estado en que se tomó la
+> decisión.
+
+El evento `CertificateValidation` no dispara solo por certificados de clientes.
+Cuando un cliente conecta, el stack valida también **el certificado del propio
+gateway** contra la URL que ese cliente mandó, y con el bind en `127.0.0.1` esa
+validación fallaba con `BadCertificateHostNameInvalid` sin impedir la conexión.
+
+Medido en la primera corrida de verificación: una conexión exitosa de UaExpert
+produjo `rejectedByCertificate: 1`, con el subject `CN=OpcGatewayDaUa, C=AR,
+O=Portfolio` — el nuestro. El contador estaba reportando un intento rechazado por
+cada cliente que entraba sin problemas. Un contador de seguridad que suma cuando
+todo sale bien no es un contador impreciso: es uno que hay que aprender a
+ignorar, y a partir de ahí no sirve para nada.
+
+El filtro compara el thumbprint del certificado en evaluación contra el del
+certificado propio, leído después de
+`CheckApplicationInstanceCertificatesAsync` porque antes de esa línea puede no
+existir todavía. Se descarta por thumbprint y no por subject: el subject es texto
+que otro certificado podría repetir, y el thumbprint es el hash del certificado
+entero.
+
+**El hallazgo colateral valió más que el filtro.** El `ERR` de dominio que
+aparecía en cada conexión venía anotado como cabo suelto sin explicación, y esto
+identificó *quién* validaba a *quién*: el servidor a sí mismo, contra la URL del
+cliente. Quedaba sin saberse por qué `127.0.0.1` no matcheaba, y esa segunda
+mitad recién se cerró dos días después leyendo el fuente del stack — ver el
+blockquote de arriba.
+
+**Por qué se conserva un filtro que hoy no filtra nada.** Corregido el
+`SubjectName`, el certificado propio ya no falla la validación y no llega al
+evento. Pero el filtro no depende de *esa* causa: dice que el certificado del
+gateway no es un intento de conexión ajeno, y eso es cierto sea cual sea el
+motivo por el que el stack decida validárselo. Sacarlo ahorraría cuatro líneas y
+volvería a exponer el contador a cualquier autovalidación futura, incluida una
+que aparezca por un cambio de configuración y no por un bug.
 
 ## 26. Solo se cuenta lo que es un rechazo
 
@@ -589,3 +622,105 @@ ahí. En JSON, en cambio, un objeto que crece no le rompe nada a nadie.
 Los nodos nuevos van bajo `Gateway.Counters`, junto a los contadores del lado DA,
 y no en una carpeta propia. Quien abre el diagnóstico todavía no sabe de qué lado
 está el problema; separarlos lo obligaría a adivinar antes de mirar.
+
+
+## 28. El cliente OPC DA es un repaquetado de terceros, no el paquete oficial
+
+El SDK elegido en la Fase 0 es **`TitaniumAS.Opc.Client.NetCore` 1.0.2.1**, MIT.
+No es el paquete oficial del proyecto: es un repaquetado publicado por un tercero
+en septiembre de 2018, y era la única vía para consumir esa librería desde .NET
+moderno.
+
+El paquete oficial, `TitaniumAS.Opc.Client`, targetea `net40`. Desde
+`net10.0-windows` solo se consumiría con `NU1701` —la advertencia de estar usando
+un paquete de .NET Framework en .NET moderno—, que es una apuesta a que el
+runtime resuelva en ejecución lo que el compilador ya avisó que no puede
+garantizar. En un proyecto cuyo riesgo principal era justamente el interop COM, no
+era el lugar para arrancar debiendo una advertencia. **No se escribió código
+contra él**: se descartó por análisis, y eso es todo lo que la Fase 0 hizo al
+respecto.
+
+**La alternativa que se descartó** fue Technosoftware OPC DA/AE/HDA Client
+Solution .NET, que targetea `net6`/`net7`/`net8` y se habría consumido sin fricción
+—el framework de una dependencia es piso, no techo—. Quedó anotada como plan B
+por si el interop COM se rompía, y nunca se ejerció. Su licencia para quien no
+compra una comercial es GPL 3.0, así que usarla habría arrastrado el repositorio
+entero a GPL. Ver decisión 29.
+
+**Qué se verificó antes de confiar en un repaquetado.** Que el proyecto original
+es MIT y su código es público; que el paquete llevaba ocho años en NuGet sin
+reportes de abuso ni CVEs; que no trae binarios nativos ni hace red por su cuenta.
+Para una PoC que corre en una máquina de desarrollo, alcanza. Si esto fuera a una
+planta real, la respuesta correcta sería compilar desde el fuente y firmarlo uno
+mismo.
+
+**El precio se cobró, y no fue teórico.** Un repaquetado queda fuera del canal de
+correcciones del proyecto original: el bug de `FILETIME` que costó cuatro fases
+está arreglado en el repositorio oficial desde hace años y nunca llegó al paquete
+que consume el gateway, porque nadie volvió a publicarlo. Se verificó que no
+existe ningún paquete de NuGet con el fix. La corrección terminó siendo propia y
+acotada al borde del driver. Detalle en
+[`bug-filetime-sdk.md`](bug-filetime-sdk.md).
+
+**Las dos restricciones que impone, y que se pagan en todo el proyecto:** el
+proceso tiene que estar en apartment MTA y `Bootstrap.Initialize()` tiene que
+correr antes que cualquier otra llamada COM. Ver decisiones 8 y 9.
+
+## 29. La licencia del repositorio la eligió el SDK, no el autor
+
+El repositorio es **MIT**, y lo es porque el SDK cliente DA lo es. La licencia
+quedó determinada en la Fase 0, antes del primer commit, y por eso la Fase 0 fue
+primero: el `LICENSE` va antes de que exista código, y no se podía escribir sin
+saber qué librería iba a entrar.
+
+Con el plan B de la decisión 28 el resultado habría sido otro. Technosoftware es
+GPL 3.0 para quien no compra licencia comercial, y la GPL es viral: un repositorio
+público que la enlaza se distribuye bajo GPL. No habría sido un error —es una
+licencia legítima y se habría documentado como consecuencia deliberada—, pero
+cambia qué puede hacer con esto quien lo lea.
+
+Elegido el SDK permisivo, MIT es la opción que no agrega restricciones propias. La
+alternativa real era una licencia más restrictiva que la de la dependencia, y
+sobre un proyecto de portfolio que existe para ser leído y copiado no tenía
+sentido: restringir a un lector algo que la librería subyacente le permite es
+costo sin beneficio.
+
+**Lo que esto deja como criterio general:** la licencia de un repositorio no se
+elige al publicarlo, se hereda de la dependencia más restrictiva que se haya
+aceptado. Conviene mirarla cuando se elige la librería, que es cuando todavía hay
+alternativas, y no cuando ya hay tres mil líneas escritas encima.
+
+## 30. Los dos endpoints escuchan solo en loopback
+
+El servidor OPC UA (`4840`) y la página de diagnóstico (`8080`) hacen bind en
+`127.0.0.1`, no en `0.0.0.0`. El gateway solo acepta clientes de la misma máquina.
+
+Es coherente con la restricción que ya tenía el proyecto del otro lado: el
+servidor DA se consume por COM local, sin DCOM remoto. Un gateway que no puede
+alcanzar un servidor DA remoto pero que se expone a toda la red ofrece superficie
+sin ofrecer alcance. Y la PoC no gana nada con la exposición: todo lo que hay que
+demostrar se demuestra con UaExpert corriendo al lado.
+
+**Se comprobó contra el socket, no contra la configuración.** Que el
+`appsettings.json` diga `127.0.0.1` prueba que se pidió el bind correcto, no que
+haya ocurrido: un default del stack, una `BaseAddress` extra o una URL reescrita
+producen un socket distinto del que dice el archivo, sin ningún error. La
+verificación fue mirar la tabla de conexiones TCP del sistema con el gateway
+corriendo y confirmar que el `LocalAddress` de los dos listeners es `127.0.0.1`.
+La trampa está anotada en `verificacion.md`: el `0.0.0.0` que aparece en
+`RemoteAddress` de un listener es relleno de Windows para un socket sin
+contraparte, y leerlo como un bind abierto —o al revés— es fácil en la dirección
+peligrosa.
+
+**El costo apareció enseguida y se pagó.** Con el bind cerrado no hay forma de
+conectar por hostname, y ese era justamente el experimento que habría refutado la
+hipótesis equivocada sobre el aviso de dominio del certificado. La decisión fue no
+abrir el bind para poder correrlo. Se resolvió por otro camino —leer el fuente del
+stack— y el caso está contado en `verificacion.md`, sección "Sobre el método".
+Vale como precedente: una restricción de seguridad que se sostiene también cuando
+molesta es una restricción; una que se levanta para depurar es una sugerencia.
+
+**El límite honesto:** nada de esto se probó contra un cliente UA en otra máquina,
+porque no puede probarse. Abrir el gateway a la red es un cambio de una línea en
+la configuración, pero deja de ser el sistema que se verificó — habría que revisar
+al menos el certificado, que hoy declara los dominios de esta máquina.
