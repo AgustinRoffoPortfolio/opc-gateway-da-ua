@@ -259,6 +259,21 @@ documentación.
 | [`docs/bug-filetime-sdk.md`](docs/bug-filetime-sdk.md) | El bug del SDK: aritmética, evidencia y corrección |
 | [`docs/glosario.md`](docs/glosario.md) | La jerga del dominio |
 
+## Repos hermanos
+
+Este gateway resuelve la mitad del problema de integración industrial: qué hacer
+cuando el sistema que hay que integrar ya existe y es de los años 90. La otra
+mitad —construir la cadena moderna completa, de campo a pantalla— es
+`oilfield-scada`. Los dos se leen mejor juntos que por separado.
+
+- **[oilfield-scada](https://github.com/AgustinRoffoPortfolio/oilfield-scada)** —
+  Sistema de monitoreo industrial de punta a punta: RTU Modbus TCP → servidor OPC
+  UA cifrado → ingesta → TimescaleDB → dashboard propio con motor de alarmas.
+  C# / .NET 10, frontend sin dependencias de terceros.
+- **[monitor-pozos](https://github.com/AgustinRoffoPortfolio/monitor-pozos)** —
+  Monitoreo en tiempo real de pozos con WebSockets y detección de anomalías no
+  supervisada (Isolation Forest). Python / FastAPI / PostgreSQL / React.
+
 ## Licencia
 
 MIT. La licencia del repositorio quedó determinada por la del SDK cliente OPC DA
